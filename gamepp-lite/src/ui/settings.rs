@@ -98,10 +98,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button("发送测试气泡").clicked() {
-                    app.tray.balloon("这是一条来自托盘的气泡通知");
-                    app.toast("已发送测试气泡");
-                }
                 if ui.button("立即最小化").clicked() {
                     app.hide_to_tray();
                 }

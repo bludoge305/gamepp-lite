@@ -49,12 +49,12 @@ gamepp-lite/
     │   └── games.rs            游戏库（exe → 名称/标签，可编辑）
     ├── opt/                    Windows 优化（自 gamepp-winopt 合并）
     │   ├── ffi.rs              优化模块专用 Win32 声明
-    │   ├── plan.rs             OptPlan：可勾选清单 + 服务映射 + 从 INI 导入
+    │   ├── plan.rs             OptPlan：可勾选清单 + 服务映射
     │   ├── exec.rs             run / restore 流程（保留原版动作顺序）
     │   ├── process.rs          进程枚举 / 特征匹配 / 终止
     │   ├── service.rs          SCM 停启服务
     │   ├── power.rs            电源方案（POWRPROF 动态加载）
-    │   ├── state.rs            优化状态落盘（只重启自己停过的服务）
+    │   ├── state.rs            优化状态落盘（只重启自己停过的服务 / 重启自己结束的 Wallpaper Engine）
     │   └── elevate.rs          管理员检测 / runas 重启
     └── ui/                     三个入口
         ├── detect.rs           ① 游戏识别（含游戏库增删改）
@@ -75,11 +75,11 @@ gamepp-lite/
 | `win::process` | `processhelper`、`K32EnumProcessModules` | 取路径/存活/优先级/图形运行时 |
 | `services::watcher` | `game listener`、`CGameWatcher` | Idle → Candidate → InGame，带防抖 |
 | `domain::games` | `GamePP_BaseInfo.processpath` + `common\Icon\<exe>.png` | exe 为键；支持编辑/删除/恢复默认 |
-| `opt::plan` | `GamePPOpt.ini [SYS]` 22 个开关 | 收敛为 14 个有动作的项 + 2 个自动化开关 |
+| `opt::plan` | `GamePPOpt.ini [SYS]` 22 个开关 | 收敛为 13 个有动作的项 + 2 个自动化开关 |
 | `opt::exec` | `GamePPOptimize.node!sub_10013f70` / `sub_100177f0` | 保留原版动作**顺序**与判据 |
 | `opt::service` | `sub_100141e0` / `sub_10016d40` | 8 个服务；SysMain 恒不停（照抄原版） |
 | `opt::power` | `Power.dll` 的 `PowerImportPowerScheme` / `PowerSetActiveScheme` | 运行时动态取 POWRPROF 导出 |
-| `opt::state` | 原版进程内全局结构体 + 服务标记表 | 落盘成 `opt-state.ini`，语义等价 |
+| `opt::state` | 原版进程内全局结构体 + 服务标记表 | 落盘成 `opt-state.ini`，语义等价；另记录被结束的 Wallpaper Engine（还原时重启） |
 | `services::tray` | `wapTray` / `createAppTray` / `Game_Traymenu` / `displayBalloon` | 原生 `HMENU` 菜单 |
 | `win::single` | `requestSingleInstanceLock` + `second-instance` | 互斥体 + 命名事件 |
 | `win::autostart` | `isStartedWithOs` | `HKCU\...\Run` |
@@ -172,8 +172,10 @@ UI 按钮 → App::start_opt(dry_run, restore)
         → 起 gpp-winopt 线程 → opt::run_plan(&plan, game_pid, dry_run)
             ① 清 DNS  ② 关 Wallpaper Engine  ③ 停后台进程  ④ 释放内存
             ⑤ 停服务 ⑥ 电源方案              ⑦ lodctr /R   ⑧ 清剪贴板
-            ⑨ 优先级 / 亲和性（跳过系统关键进程与自身）
+            ⑨ 优先级（跳过系统关键进程与自身）
         → 逐行日志回传 UI；非预演时 State::save()（还原则 State::clear()）
+          「关闭 Wallpaper Engine」终止前记录 exe 路径，还原时逐个重启
+          （文件已删除 / 同名进程已在运行则跳过）
 ```
 
 ### 6.4 托盘图标与状态
@@ -220,7 +222,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 |---|---|
 | `config.json` | 识别节拍、稳定轮数、托盘开关、自启、数据保留、`opt`（优化清单 + 两个自动化开关） |
 | `gamelib.json` | 游戏库（exe、显示名、标签） |
-| `opt-state.ini` | 优化状态：是否已优化、停过哪些服务、上一套电源方案 |
+| `opt-state.ini` | 优化状态：是否已优化、停过哪些服务、被结束的 Wallpaper Engine、上一套电源方案 |
 | `runtime.log` | 启动 / 托盘 / 优化逐行流水（排查"闪退"与优化失败） |
 | `crash.log` | panic 现场 + backtrace |
 
@@ -232,8 +234,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 `src/opt/`，只做了三处改动：
 
 1. 输出从 `println!` 改成 `&mut Vec<String>`，由 GUI 展示 + 落 `runtime.log`；
-2. 配置源从"读 GamePP 的 INI"改成"自己的 `OptPlan`"，另留一个 **`导入游戏加加的配置`** 按钮
-   （只读它的 `GamePPOpt.ini`，从不写回）；
+2. 配置源从"读 GamePP 的 INI"改成"自己的 `OptPlan`"（不再提供 INI 导入）；
 3. 增加一条**安全偏差**：提优先级前跳过系统关键进程
    （`svchost.exe / explorer.exe / services.exe / lsass.exe / dwm.exe` 等 12 个）与自身进程。
    原因：原版对"命中特征表"的进程无差别处理，实测会命中 svchost 一类系统进程；

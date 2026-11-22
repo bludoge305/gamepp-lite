@@ -2,10 +2,11 @@
 //!
 //! `run` 严格保留原版 `GamePPOptimize.node!sub_10013f70` 的动作顺序（逐条比对过）：
 //!   ① 清 DNS → ② 关 Wallpaper Engine → ③ 停后台进程 → ④ 释放内存 →
-//!   ⑤ 停服务 → ⑥ 电源方案 → ⑦ 无条件 lodctr /R → ⑧ 清剪贴板 → ⑨ 优先级/亲和性
+//!   ⑤ 停服务 → ⑥ 电源方案 → ⑦ 无条件 lodctr /R → ⑧ 清剪贴板 → ⑨ 优先级
 //!
 //! `restore` 对应 `sub_1000d920` 里的 `[重读配置 → sub_100141e0(0) → sub_100177f0]`：
 //!   只重启自己停过的服务 → 全会话优先级复位 NORMAL → 电源方案还原。
+//!   在原版之外补了一步：重新启动被「关闭 Wallpaper Engine」结束的进程。
 //!
 //! 与原版的差异只有一处：所有输出走调用方给的 `log`（Vec<String>），因为 GUI 没有控制台。
 
@@ -38,7 +39,6 @@ fn note(log: &mut Vec<String>, s: impl Into<String>) {
 pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) -> State {
     let mut st = State {
         optimized: !dry_run,
-        cores: if plan.limit_cores { plan.cores } else { 0 },
         game_pid,
         ..Default::default()
     };
@@ -59,17 +59,21 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
         }
     }
 
-    // ② 关闭 Wallpaper Engine（按子串 "wallpaper" 终止）
+    // ② 关闭 Wallpaper Engine（按子串 "wallpaper" 终止；终止前记录 exe 路径，还原时重启）
     if plan.wallpaper_engine {
         if dry_run {
-            note(log, "· 关闭 Wallpaper Engine（预演不执行）");
+            note(log, "· 关闭 Wallpaper Engine（预演不执行；还原时会重新启动它们）");
         } else {
-            let killed = process::kill_matching(&["wallpaper".to_string()], true);
+            let killed = process::kill_matching_recording(&["wallpaper".to_string()], true);
             if killed.is_empty() {
                 note(log, "· 未发现 Wallpaper Engine 进程");
             }
-            for (name, pid) in killed {
+            for (name, pid, path) in killed {
                 note(log, format!("· 已结束 {name}（{pid}）"));
+                // 只记录拿得到完整路径的进程，否则还原时无从启动。
+                if !path.is_empty() {
+                    st.killed_wallpaper.push(path);
+                }
             }
         }
     }
@@ -186,7 +190,7 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
         }
     }
 
-    // ⑨ 优先级 / 亲和性
+    // ⑨ 优先级
     apply_priority(plan, game_pid, dry_run, log);
 
     if !dry_run {
@@ -248,15 +252,6 @@ fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<St
         ffi::NORMAL_PRIORITY_CLASS
     };
 
-    let total = total_cores().min(64);
-    let limit_mask: Option<usize> = if plan.limit_cores && plan.cores >= 4 && total > 0 && !helper_running
-    {
-        let active = if plan.cores >= total { total / 2 } else { plan.cores };
-        Some(mask_msb_first(total, active) as usize)
-    } else {
-        None
-    };
-
     let mut touched = 0usize;
     for p in &procs {
         if process::match_any(&p.name, &patterns).is_none() {
@@ -282,7 +277,6 @@ fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<St
                     if !dry_run {
                         ffi::SetPriorityClass(h, target);
                     }
-                    // game_priority 关闭时目标也是 NORMAL（原版语义），别一律写成"提"
                     note(
                         log,
                         format!(
@@ -297,11 +291,6 @@ fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<St
                             p.pid
                         ),
                     );
-                }
-            }
-            if let Some(mask) = limit_mask {
-                if !dry_run {
-                    ffi::SetProcessAffinityMask(h, mask);
                 }
             }
             ffi::CloseHandle(h);
@@ -322,7 +311,7 @@ fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<St
     }
 }
 
-/// 还原：只重启自己停过的服务 → 全会话优先级复位 → 电源方案还原。
+/// 还原：只重启自己停过的服务 → 重启被结束的 Wallpaper Engine → 全会话优先级复位 → 电源方案还原。
 pub fn restore(plan: &OptPlan, st: &mut State, dry_run: bool, log: &mut Vec<String>) {
     note(
         log,
@@ -344,21 +333,11 @@ pub fn restore(plan: &OptPlan, st: &mut State, dry_run: bool, log: &mut Vec<Stri
         }
     }
 
-    let total = total_cores().min(64);
-    let all_mask = if st.cores > 0 && total > 0 {
-        Some(mask_msb_first(total, total) as usize)
-    } else {
-        None
-    };
+    // 重新启动被「关闭 Wallpaper Engine」结束的进程（原版不做这一步，本工程补上）。
+    restore_wallpaper(st, dry_run, log);
 
     if dry_run {
-        match all_mask {
-            Some(m) => note(
-                log,
-                format!("· 将把当前会话所有进程优先级复位 NORMAL，亲和性 = {m:#x}（全 {total} 核）"),
-            ),
-            None => note(log, "· 将把当前会话所有进程优先级复位 NORMAL"),
-        }
+        note(log, "· 将把当前会话所有进程优先级复位 NORMAL");
         if let Some(prev) = st.prev_plan.clone() {
             note(log, format!("· 将还原电源方案 {prev}"));
         }
@@ -374,9 +353,6 @@ pub fn restore(plan: &OptPlan, st: &mut State, dry_run: bool, log: &mut Vec<Stri
                 continue;
             }
             ffi::SetPriorityClass(h, ffi::NORMAL_PRIORITY_CLASS);
-            if let Some(m) = all_mask {
-                ffi::SetProcessAffinityMask(h, m);
-            }
             ffi::CloseHandle(h);
             touched += 1;
         }
@@ -395,28 +371,63 @@ pub fn restore(plan: &OptPlan, st: &mut State, dry_run: bool, log: &mut Vec<Stri
 
     st.optimized = false;
     st.stopped_services.clear();
+    st.killed_wallpaper.clear();
     st.plan_switched = false;
     st.prev_plan = None;
     note(log, "还原完成");
 }
 
-pub fn total_cores() -> u32 {
-    unsafe {
-        let n = ffi::GetActiveProcessorCount(0xFFFF);
-        if n == 0 {
-            1
+/// 重启被结束的 Wallpaper Engine 进程。
+///
+/// 规则：
+/// - 记录的是 exe 完整路径（终止前用 QueryFullProcessImageNameW 取的）；
+/// - 文件已不存在（比如游戏期间被卸载/移动）→ 跳过；
+/// - 同名进程已在运行（用户自己又开了，或它有守护进程）→ 不再重复启动；
+/// - 启动走 ShellExecuteW("open")，不等待、不提权。
+fn restore_wallpaper(st: &State, dry_run: bool, log: &mut Vec<String>) {
+    if st.killed_wallpaper.is_empty() {
+        return;
+    }
+    if dry_run {
+        note(
+            log,
+            format!(
+                "· 将尝试重启 {} 个被结束的 Wallpaper Engine 进程",
+                st.killed_wallpaper.len()
+            ),
+        );
+        return;
+    }
+
+    let mut ok = 0usize;
+    let mut skipped = 0usize;
+    for path in &st.killed_wallpaper {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.is_empty() || !std::path::Path::new(path).is_file() {
+            note(log, format!("· 无法恢复（文件不存在）：{path}"));
+            skipped += 1;
+            continue;
+        }
+        if process::is_running(&name) {
+            note(log, format!("· 已在运行，无需恢复：{name}"));
+            skipped += 1;
+            continue;
+        }
+        if process::launch_detached(path) {
+            note(log, format!("· 已重新启动 {name}（{path}）"));
+            ok += 1;
         } else {
-            n
+            note(log, format!("· 启动失败：{path}"));
+            skipped += 1;
         }
     }
-}
-
-/// 生成 length 个字符、前 active 个为 1 的掩码，按"首字符为最高位"解释成整数。
-fn mask_msb_first(length: u32, active: u32) -> u64 {
-    let mut mask: u64 = 0;
-    for i in 0..length {
-        let bit = if i < active { 1u64 } else { 0u64 };
-        mask = (mask << 1) | bit;
+    if ok + skipped > 0 {
+        note(
+            log,
+            format!("· Wallpaper Engine 恢复：成功 {ok}，跳过/失败 {skipped}"),
+        );
     }
-    mask
 }

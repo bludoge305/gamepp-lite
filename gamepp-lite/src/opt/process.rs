@@ -122,6 +122,75 @@ pub fn terminate(pid: u32) -> bool {
     }
 }
 
+/// 进程完整映像路径（终止前先取，供还原时重新启动）。
+fn exe_path_of(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let h = ffi::OpenProcess(ffi::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let ok = ffi::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
+        ffi::CloseHandle(h);
+        if ok == 0 {
+            None
+        } else {
+            Some(ffi::from_wide(&buf[..size as usize]))
+        }
+    }
+}
+
+/// 按特征表终止进程，返回 (进程名, pid, 完整路径)。
+///
+/// 「关闭 Wallpaper Engine」用这一版：终止前先把 exe 路径记下来，
+/// 还原时才能重新启动（记录 pid 没有意义，届时多半已被系统复用）。
+/// 取不到路径的进程照杀但不记录 —— 与原版行为一致。
+pub fn kill_matching_recording(
+    patterns: &[String],
+    only_current_session: bool,
+) -> Vec<(String, u32, String)> {
+    let mut killed = Vec::new();
+    for p in list_processes(only_current_session) {
+        if match_any(&p.name, patterns).is_none() {
+            continue;
+        }
+        let path = exe_path_of(p.pid);
+        if terminate(p.pid) {
+            killed.push((p.name, p.pid, path.unwrap_or_default()));
+        }
+    }
+    killed
+}
+
+/// 某个映像名（如 `wallpaper64.exe`）当前是否在运行。
+pub fn is_running(exe_name: &str) -> bool {
+    let lower = exe_name.to_lowercase();
+    list_processes(false)
+        .iter()
+        .any(|p| p.name.to_lowercase() == lower)
+}
+
+/// 以默认方式启动一个 exe（不等待、不提权）。用于还原被结束的 Wallpaper Engine。
+pub fn launch_detached(path: &str) -> bool {
+    unsafe {
+        let verb = ffi::wide("open");
+        let file = ffi::wide(path);
+        // 返回值 > 32 表示成功（SE_ERR 常规约定）。
+        ffi::ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            ffi::SW_SHOWNORMAL,
+        ) > 32
+    }
+}
+
 /// 按特征表终止进程，返回 (进程名, pid)。
 pub fn kill_matching(patterns: &[String], only_current_session: bool) -> Vec<(String, u32)> {
     let mut killed = Vec::new();

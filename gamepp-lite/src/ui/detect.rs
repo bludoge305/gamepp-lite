@@ -67,28 +67,37 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     let mut do_restore = false;
 
     // ---------- 第一行：当前前台窗口 | 游戏库 ----------
+    // 两张卡片要求底边对齐：左卡先画，量出内容高度；右卡的列表吃掉剩余高度。
+    // 用 min_rect/cursor 量的是 Frame 内部内容高度（标题+行），两卡的 Frame 边距一致，
+    // 内容等高即卡片等高。
+    let mut left_card_h = 0.0f32;
     ui.columns(2, |cols| {
-        ui::card(&mut cols[0], "当前前台窗口", |ui| match &fg {
-            Some(f) => {
-                kv(ui, "窗口句柄", &format!("0x{:X}", f.hwnd));
-                kv(ui, "进程 ID", &f.pid.to_string());
-                kv(ui, "映像名", &f.exe);
-                kv(ui, "窗口标题", if f.title.is_empty() { "—" } else { &f.title });
-                kv(ui, "窗口类", if f.class.is_empty() { "—" } else { &f.class });
-                kv(ui, "全屏", if f.fullscreen { "是" } else { "否" });
-                let prio = f
-                    .priority
-                    .map(crate::win::process::priority_name)
-                    .unwrap_or("—");
-                kv(ui, "进程优先级", prio);
-                kv(ui, "映像路径", &f.path);
+        ui::card(&mut cols[0], "当前前台窗口", |ui| {
+            let top = ui.min_rect().top();
+            match &fg {
+                Some(f) => {
+                    kv(ui, "窗口句柄", &format!("0x{:X}", f.hwnd));
+                    kv(ui, "进程 ID", &f.pid.to_string());
+                    kv(ui, "映像名", &f.exe);
+                    kv(ui, "窗口标题", if f.title.is_empty() { "—" } else { &f.title });
+                    kv(ui, "窗口类", if f.class.is_empty() { "—" } else { &f.class });
+                    kv(ui, "全屏", if f.fullscreen { "是" } else { "否" });
+                    let prio = f
+                        .priority
+                        .map(crate::win::process::priority_name)
+                        .unwrap_or("—");
+                    kv(ui, "进程优先级", prio);
+                    kv(ui, "映像路径", &f.path);
+                }
+                None => {
+                    ui.label(RichText::new("没有前台窗口").size(12.0).color(ui::MUTED));
+                }
             }
-            None => {
-                ui.label(RichText::new("没有前台窗口").size(12.0).color(ui::MUTED));
-            }
+            left_card_h = ui.min_rect().bottom() - top;
         });
 
         ui::card(&mut cols[1], "游戏库（本地）", |ui| {
+            let top = ui.min_rect().top();
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("共 {} 条 · 命中判据为映像名", entries.len()))
@@ -106,10 +115,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 });
             });
             ui.add_space(4.0);
+            // 列表高度 = 左卡内容高度 −（标题+统计行已占用）。80px 下限兜底：
+            // 左卡没有前台窗口时只剩一行，此时列表保持可用的小高度。
+            let list_h = (left_card_h - (ui.cursor().top() - top)).max(80.0);
 
             egui::ScrollArea::vertical()
                 .id_salt("lib")
-                .max_height(184.0)
+                .max_height(list_h)
                 .auto_shrink([false, false])
                 // 滚动条常驻：否则它会晚于布局出现，available_width 少扣 10 多像素，
                 // 行内按钮就会顶出卡片、把整页撑宽。

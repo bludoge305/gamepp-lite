@@ -111,8 +111,6 @@ pub struct Shared {
     pub log: VecDeque<LogLine>,
     pub polls: u64,
     pub running: bool,
-    /// 最近一次 Windows 优化/还原的结论。
-    pub last_opt: Option<String>,
 }
 
 impl Shared {

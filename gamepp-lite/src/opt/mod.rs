@@ -14,7 +14,7 @@ pub mod process;
 pub mod service;
 pub mod state;
 
-pub use exec::{restore, run, total_cores};
+pub use exec::{restore, run};
 pub use plan::OptPlan;
 pub use state::State;
 

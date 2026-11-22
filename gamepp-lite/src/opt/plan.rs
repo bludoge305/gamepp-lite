@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct OptPlan {
-    // ---------------- 常用（与原版 UI 的 9 项一一对应） ----------------
+    // ---------------- 常用 ----------------
     /// SystemGameProPriority：命中的游戏进程提到 ABOVE_NORMAL。
     pub game_priority: bool,
     /// SystemKillBackPro：结束后台黑名单进程（不可恢复）。
@@ -17,7 +17,7 @@ pub struct OptPlan {
     pub power_high_perf: bool,
     /// SystemAIMemory：对全部进程 EmptyWorkingSet。
     pub free_memory: bool,
-    /// SystemWallPaperEngnine：结束名字含 wallpaper 的进程。
+    /// SystemWallPaperEngnine：结束名字含 wallpaper 的进程（还原时会重新启动）。
     pub wallpaper_engine: bool,
     /// SystemXblAuthManager：停止 Xbox Live 身份验证管理器。
     pub xbl_auth: bool,
@@ -37,9 +37,6 @@ pub struct OptPlan {
     pub diag_svc: bool,
     /// SystemHomeGroupProvider/Listener：停止家庭组两个服务。
     pub homegroup: bool,
-    /// SystemLimitCore：把命中进程的亲和性限制到前 N 个核。
-    pub limit_cores: bool,
-    pub cores: u32,
 
     // ---------------- 自动化（原版由主进程状态机隐式完成） ----------------
     /// 识别到游戏时自动执行本清单。
@@ -65,8 +62,6 @@ impl Default for OptPlan {
             diag_track: false,
             diag_svc: false,
             homegroup: false,
-            limit_cores: false,
-            cores: 0,
             auto_on_game_start: false,
             auto_restore_on_exit: false,
         }
@@ -74,19 +69,6 @@ impl Default for OptPlan {
 }
 
 impl OptPlan {
-    /// 一组相对保守的推荐值：只动"可回收、非破坏性"的项。
-    pub fn recommended() -> Self {
-        Self {
-            game_priority: true,
-            flush_dns: true,
-            free_memory: true,
-            power_high_perf: true,
-            auto_on_game_start: false,
-            auto_restore_on_exit: false,
-            ..Default::default()
-        }
-    }
-
     pub fn enabled_count(&self) -> usize {
         [
             self.game_priority,
@@ -102,15 +84,15 @@ impl OptPlan {
             self.diag_track,
             self.diag_svc,
             self.homegroup,
-            self.limit_cores,
         ]
         .iter()
         .filter(|b| **b)
         .count()
     }
 
+    /// 是否包含"不可撤销"的动作。Wallpaper Engine 已可在还原时重新启动，不算。
     pub fn has_destructive(&self) -> bool {
-        self.kill_background || self.clean_clipboard || self.wallpaper_engine
+        self.kill_background || self.clean_clipboard
     }
 
     /// 服务名 + 是否处理。顺序与原始实现 `sub_100141e0` 里 8 条字符串的顺序一致。
@@ -128,48 +110,5 @@ impl OptPlan {
             ("DiagTrack", self.diag_track),
             ("Diagsvc", self.diag_svc),
         ]
-    }
-
-    /// 从游戏加加自己的 INI 导入一份默认值（仅用于"导入"按钮，不写回它的文件）。
-    pub fn import_from_gamepp_ini() -> Option<Self> {
-        let path = default_ini_path();
-        if !std::path::Path::new(&path).is_file() {
-            return None;
-        }
-        let file = crate::opt::ffi::wide(&path);
-        let sec = crate::opt::ffi::wide("SYS");
-        let int = |key: &str| -> u32 {
-            let k = crate::opt::ffi::wide(key);
-            unsafe {
-                crate::opt::ffi::GetPrivateProfileIntW(sec.as_ptr(), k.as_ptr(), 0, file.as_ptr())
-            }
-        };
-        Some(Self {
-            game_priority: int("SystemGameProPriority") != 0,
-            kill_background: int("SystemKillBackPro") != 0,
-            power_high_perf: int("SystemAIPower") != 0,
-            free_memory: int("SystemAIMemory") != 0,
-            wallpaper_engine: int("SystemWallPaperEngnine") != 0,
-            xbl_auth: int("SystemXblAuthManager") != 0,
-            windows_search: int("SystemWindwosSearch") != 0,
-            flush_dns: int("SystemFlushDns") != 0,
-            clean_clipboard: int("SystemCleanClipBoard") != 0,
-            windows_update: int("SystemWindowsUpdate") != 0,
-            diag_track: int("SystemDiagtrack") != 0,
-            diag_svc: int("SystemDiagsvc") != 0,
-            homegroup: int("SystemHomeGroupProvider") != 0,
-            limit_cores: int("SystemLimitCore") != 0,
-            cores: int("SystemLimitCoreCount"),
-            auto_on_game_start: false,
-            auto_restore_on_exit: false,
-        })
-    }
-}
-
-/// 默认 ini 路径：%LOCALAPPDATA%\GamePP\GamePPOpt.ini
-pub fn default_ini_path() -> String {
-    match std::env::var("LOCALAPPDATA") {
-        Ok(p) => format!("{}\\GamePP\\GamePPOpt.ini", p),
-        Err(_) => "GamePPOpt.ini".to_string(),
     }
 }

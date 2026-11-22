@@ -20,6 +20,7 @@ pub const WAIT_OBJECT_0: DWORD = 0;
 
 pub const PROCESS_TERMINATE: DWORD = 0x0001;
 pub const PROCESS_ALL_ACCESS: DWORD = 0x001F_FFFF;
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 pub const TH32CS_SNAPPROCESS: DWORD = 0x0000_0002;
 
 pub const IDLE_PRIORITY_CLASS: DWORD = 0x0000_0040;
@@ -152,13 +153,13 @@ unsafe extern "system" {
     pub fn ProcessIdToSessionId(pid: DWORD, session: *mut DWORD) -> BOOL;
     pub fn GetCurrentProcessId() -> DWORD;
     pub fn GetCurrentProcess() -> HANDLE;
+    pub fn QueryFullProcessImageNameW(
+        h: HANDLE,
+        flags: DWORD,
+        buf: *mut u16,
+        size: *mut DWORD,
+    ) -> BOOL;
     pub fn WinExec(cmd: LPCSTR, show: u32) -> u32;
-    pub fn GetPrivateProfileIntW(
-        section: LPCWSTR,
-        key: LPCWSTR,
-        default: i32,
-        file: LPCWSTR,
-    ) -> u32;
     pub fn GetActiveProcessorCount(group: u16) -> DWORD;
     pub fn LocalFree(h: HANDLE) -> HANDLE;
     pub fn GetLastError() -> DWORD;
@@ -201,6 +202,14 @@ unsafe extern "system" {
 #[link(name = "shell32")]
 unsafe extern "system" {
     pub fn ShellExecuteExW(info: *mut SHELLEXECUTEINFOW) -> BOOL;
+    pub fn ShellExecuteW(
+        hwnd: HANDLE,
+        op: LPCWSTR,
+        file: LPCWSTR,
+        params: LPCWSTR,
+        dir: LPCWSTR,
+        show: i32,
+    ) -> isize;
 }
 
 // ---- 提权相关常量 ------------------------------------------------------------

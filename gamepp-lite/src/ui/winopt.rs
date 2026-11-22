@@ -1,10 +1,9 @@
 //! ② Windows 优化（由 `gamepp-winopt` 合并进来）。
 //!
-//! 左侧是可勾选的优化项，右侧是"高级 + 自动化"，底部是执行日志。
+//! 左侧是可勾选的优化项，右侧是高级项，底部是执行日志。
 //! 所有动作都需要管理员权限；没有提权时页面顶部给出一键"以管理员身份重启"。
 
 use crate::app::App;
-use crate::opt::{self, OptPlan};
 use crate::ui;
 use eframe::egui;
 use eframe::egui::RichText;
@@ -31,15 +30,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 },
                 if restored { ui::MUTED } else { ui::WARN },
             );
-            let last = app
-                .services
-                .shared
-                .lock()
-                .ok()
-                .and_then(|s| s.last_opt.clone());
-            if let Some(t) = last {
-                ui::chip(ui, &format!("上次：{t}"), ui::ACCENT);
-            }
         });
         if !app.elevated {
             ui.add_space(4.0);
@@ -74,36 +64,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             {
                 app.start_opt(false, false);
             }
+            // 只有处于「已优化」状态才有东西可还原；`restored` 表示"当前已还原"。
             if ui
-                .add_enabled(enabled && restored, egui::Button::new("还原"))
-                .on_hover_text("重启自己停过的服务、优先级复位、电源方案还原")
+                .add_enabled(enabled && !restored, egui::Button::new("还原"))
+                .on_hover_text("重启自己停过的服务、重启被结束的 Wallpaper Engine、优先级复位、电源方案还原")
                 .clicked()
             {
                 app.start_opt(false, true);
-            }
-            ui.separator();
-            if ui.button("导入游戏加加的配置").clicked() {
-                match OptPlan::import_from_gamepp_ini() {
-                    Some(p) => {
-                        let auto_start = app.settings.opt.auto_on_game_start;
-                        let auto_restore = app.settings.opt.auto_restore_on_exit;
-                        app.settings.opt = p;
-                        app.settings.opt.auto_on_game_start = auto_start;
-                        app.settings.opt.auto_restore_on_exit = auto_restore;
-                        app.dirty = true;
-                        app.toast("已从 GamePPOpt.ini 导入勾选项");
-                    }
-                    None => app.toast("没找到 %LOCALAPPDATA%\\GamePP\\GamePPOpt.ini"),
-                }
-            }
-            if ui.button("恢复推荐组合").clicked() {
-                let auto_start = app.settings.opt.auto_on_game_start;
-                let auto_restore = app.settings.opt.auto_restore_on_exit;
-                app.settings.opt = OptPlan::recommended();
-                app.settings.opt.auto_on_game_start = auto_start;
-                app.settings.opt.auto_restore_on_exit = auto_restore;
-                app.dirty = true;
-                app.toast("已填入推荐组合（只动可回收项）");
             }
             if app.opt_running {
                 ui.spinner();
@@ -113,7 +80,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         if app.settings.opt.has_destructive() {
             ui.add_space(4.0);
             ui.label(
-                RichText::new("注意：勾选项里包含「结束进程 / 清空剪贴板 / 关 Wallpaper Engine」，这些动作不可撤销。")
+                RichText::new("注意：勾选项里包含「结束进程 / 清空剪贴板」，这些动作不可撤销（Wallpaper Engine 会在还原时重新启动）。")
                     .size(11.0)
                     .color(ui::BAD),
             );
@@ -123,9 +90,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     // ---------------- 优化项 ----------------
     ui.add_space(8.0);
     let mut changed = false;
-    let cores_total = opt::total_cores();
     ui.columns(2, |cols| {
-        ui::card(&mut cols[0], "常用项（与原版界面 9 项对应）", |ui| {
+        ui::card(&mut cols[0], "常用项", |ui| {
             let p = &mut app.settings.opt;
             changed |= ui
                 .checkbox(&mut p.game_priority, "调整游戏进程优先级（ABOVE_NORMAL）")
@@ -168,24 +134,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             changed |= ui
                 .checkbox(&mut p.homegroup, "停止家庭组服务（HomeGroup ×2）")
                 .changed();
-            ui.add_space(4.0);
-            changed |= ui
-                .checkbox(&mut p.limit_cores, "限制游戏可用核心数")
-                .changed();
-            ui.horizontal(|ui| {
-                ui.add_enabled(
-                    p.limit_cores,
-                    egui::DragValue::new(&mut p.cores)
-                        .speed(1.0)
-                        .range(0..=cores_total)
-                        .suffix(" 核"),
-                );
-                ui.label(
-                    RichText::new(format!("本机 {cores_total} 核；≥4 才生效"))
-                        .size(10.0)
-                        .color(ui::MUTED),
-                );
-            });
         });
     });
 

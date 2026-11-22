@@ -7,7 +7,7 @@
 
 use crate::domain::games::GameLibrary;
 use crate::domain::settings::Settings;
-use crate::opt::{self, OptPlan};
+use crate::opt;
 use crate::services::tray::{TrayCmd, TrayHandle};
 use crate::services::{Config, DetectState, Level, Services, UiNotice};
 use crate::ui;
@@ -163,7 +163,6 @@ impl App {
             ctx: cc.egui_ctx.clone(),
         };
         if std::env::var("GPP_OPT_DRY").is_ok() {
-            app.settings.opt = OptPlan::recommended();
             app.start_opt(true, false);
         }
         app
@@ -368,7 +367,6 @@ impl App {
                         .cloned()
                         .unwrap_or_else(|| "完成".to_string());
                     if let Ok(mut s) = self.services.shared.lock() {
-                        s.last_opt = Some(summary.clone());
                         s.push_log(
                             Level::Action,
                             format!(
