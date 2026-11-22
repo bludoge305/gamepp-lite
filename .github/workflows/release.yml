@@ -48,6 +48,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           $v = $env:TAG -replace '^v', ''
+          New-Item -ItemType Directory -Force "$PWD\dist" | Out-Null
           & "C:\Program Files (x86)\NSIS\makensis.exe" `
             /DVERSION=$v `
             /DOUTFILE="$PWD\dist\gamepp-lite-setup-$v.exe" `
