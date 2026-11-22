@@ -102,6 +102,17 @@ impl App {
         // 再应用 shadcn vega 主题（含深色样式）并锁定深色模式。
         let fonts = install_cjk_font(&cc.egui_ctx);
         let theme = shadcn_egui::Theme::vega()
+            .size(
+                ui::CARD_COMPACT,
+                shadcn_egui::components::card::CardSize::Default,
+                |r, _| {
+                    // 紧凑卡片（对齐示例草图）：上下留白 12、标题/块距 10、卡内行距 8。
+                    r.card.pad_top.set(12.0);
+                    r.card.pad_bottom.set(12.0);
+                    r.card.gap.set(10.0);
+                    r.card_content.gap.set(8.0);
+                },
+            )
             .color(
                 ui::GOOD_ROLE,
                 egui::Color32::from_rgb(0x1E, 0x8E, 0x5A),
@@ -117,6 +128,12 @@ impl App {
         cc.egui_ctx.style_mut_of(egui::Theme::Dark, |s| {
             s.spacing.item_spacing = egui::vec2(10.0, 8.0);
             s.spacing.button_padding = egui::vec2(10.0, 5.0);
+            // 主题把 interact_size 抬到了 36px，导致 horizontal/vertical
+            // 布局的每行最小高度被抬高（44px）。压回紧凑值。
+            s.spacing.interact_size = egui::vec2(40.0, 18.0);
+            s.spacing.icon_width_inner = 8.0;
+            // 深色背景下滚动条默认色几乎不可见，改用前景色。
+            s.spacing.scroll.foreground_color = true;
         });
 
         let mut settings = Settings::load();
@@ -357,7 +374,7 @@ impl App {
 
     /// 提权被取消时把单实例锁抢回来（否则可以再开第二个实例）。
     fn reacquire_instance(&self) {
-        if !crate::win::single::acquire(crate::INSTANCE_KEY) {
+        if !crate::win::single::acquire(&crate::instance_key()) {
             crate::log_line("elevate", "提权取消后重新抢占单实例锁失败");
         }
     }
@@ -573,20 +590,23 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(10, 12)),
             )
             .show(ui, |ui| {
-                for tab in [Tab::Detect, Tab::WinOpt, Tab::Settings] {
-                    let selected = self.tab == tab;
-                    let btn = Button::new(tab.label())
-                        .variant(if selected {
+                // 整宽导航项（justified 布局让按钮吃满栏宽、文字居中）。
+                // 不能用 `.expanded(true)`：那是 aria-expanded，会触发 Ghost 的
+                // EXPANDED 填充规则，未选中项也被涂上 Muted 底色（示例是纯文本）。
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                    for tab in [Tab::Detect, Tab::WinOpt, Tab::Settings] {
+                        let selected = self.tab == tab;
+                        let btn = Button::new(tab.label()).variant(if selected {
                             ButtonVariant::Secondary
                         } else {
                             ButtonVariant::Ghost
-                        })
-                        .expanded(true);
-                    if ui.add(btn).on_hover_text(tab.hint()).clicked() {
-                        self.tab = tab;
+                        });
+                        if ui.add(btn).on_hover_text(tab.hint()).clicked() {
+                            self.tab = tab;
+                        }
+                        ui.add_space(2.0);
                     }
-                    ui.add_space(2.0);
-                }
+                });
             });
     }
 
@@ -633,7 +653,7 @@ impl App {
                     |ui| {
                         let s = self.services.shared.lock().unwrap_or_else(|e| e.into_inner());
                         ui.label(
-                            egui::RichText::new(format!("轮询 {} 次", s.polls))
+                            egui::RichText::new(format!("轮询 {} 次", thousands(s.polls)))
                                 .size(11.0)
                                 .color(ui::muted(ui)),
                         );
@@ -668,8 +688,14 @@ impl App {
         let Ok(path) = std::env::var("GPP_SHOT") else {
             return;
         };
+        // GPP_SHOT_FRAME 可指定截图帧（默认 6）：等高回填这类逐帧收敛的
+        // 布局要在足够多的帧之后截图才能看出漂移/稳定。
+        let shot_at: u32 = std::env::var("GPP_SHOT_FRAME")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(6);
         self.shot_frame += 1;
-        if self.shot_frame == 6 {
+        if self.shot_frame == shot_at {
             // egui 0.37：截图改为 ScreenshotCallback（回调直接拿到 ColorImage）。
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
                 egui::ScreenshotCallback::new(move |img| save_bmp(&path, &img)),
@@ -714,10 +740,12 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(14)),
             )
             .show(ui, |ui| {
-                // 滚动条常驻：否则它会晚于布局出现，页面宽度先宽后窄导致卡片溢出窗口。
+                // 滚动条按需显示。悬浮式滚动条覆盖在内容上、不占宽度，出现/
+                // 消失不会引起布局抖动；早前「常驻滚动条防宽度抖动」的 workaround
+                // 是给高度失控 bug 止血的，已随等高回填回路修复一并撤销。
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                     .show(ui, |ui| match self.tab {
                         Tab::Detect => ui::detect::show(ui, self),
                         Tab::WinOpt => ui::winopt::show(ui, self),
@@ -777,6 +805,19 @@ fn install_cjk_font(_ctx: &egui::Context) -> egui::FontDefinitions {
         break;
     }
     fonts
+}
+
+/// 千分位分隔（1247 → "1,247"，状态栏轮询计数与示例一致）。
+fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// 把 ColorImage 写成 24 位 BMP（不引图片编码库）。

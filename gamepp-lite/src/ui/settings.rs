@@ -13,7 +13,7 @@ use shadcn_egui::components::button::{Button, ButtonVariant};
 use shadcn_egui::components::dialog::{self, Dialog};
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
-    ui::page_title(ui, "设置", "");
+    ui::page_title(ui, "设置", crate::app::Tab::Settings.hint());
     // 页面可用宽度（Card 体内的 Ui 宽度无界，滑杆宽度从这里推）。
     let page_w = ui.available_width();
 

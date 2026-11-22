@@ -21,12 +21,12 @@ use shadcn_egui::components::button::{Button, ButtonVariant};
 use shadcn_egui::components::separator::Separator;
 use shadcn_egui::style::Role;
 
+/// 游戏库列表的行间距（示例草图 ~30px 行距：行体 26 + 行间 4）。
+const LIB_ROW_GAP: f32 = 4.0;
+
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
     ui.set_max_width(ui.available_width());
-    ui::page_title(ui, "游戏识别", "");
-    // 页面可用宽度（Card 体内的 Ui 宽度无界，卡内分栏一律从这里推）。
-    let page_w = ui.available_width();
-    crate::log_line("probe", &format!("spacing={:?} interact={:?}", ui.spacing().item_spacing, ui.spacing().interact_size));
+    ui::page_title(ui, "游戏识别", crate::app::Tab::Detect.hint());
 
     let (state_text, state_hit, fg, library_hit, heuristics, game_name, since) = {
         let s = app.services.shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -91,29 +91,41 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 title_badge,
             );
         }, |ui| {
-            let total = page_w - 30.0;
+            // 卡体 Ui 有界，以实际可用宽度为准。行内横向间距清零，
+            // 右栏（判定依据）吃剩余宽度：与卡右内缘精确对齐，不再溢出裁切。
+            let total = ui.available_width();
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 let left_w = (total * 0.62).floor().max(200.0);
-                let right_w = (total - left_w - 24.0).max(160.0);
                 ui::column(ui, left_w, |ui| {
                     match &fg {
                         Some(f) => {
-                            ui::kv(ui, "窗口句柄", &format!("0x{:X}", f.hwnd));
-                            ui::kv(ui, "进程 ID", &f.pid.to_string());
-                            ui::kv(ui, "映像名", &f.exe);
-                            ui::kv(
-                                ui,
-                                "窗口标题",
-                                if f.title.is_empty() { "—" } else { &f.title },
-                            );
-                            ui::kv(ui, "窗口类", if f.class.is_empty() { "—" } else { &f.class });
-                            ui::kv(ui, "全屏", if f.fullscreen { "是" } else { "否" });
-                            let prio = f
-                                .priority
-                                .map(crate::win::process::priority_name)
-                                .unwrap_or("—");
-                            ui::kv(ui, "进程优先级", prio);
-                            ui::kv(ui, "映像路径", &f.path);
+                            // 键值分两列排（对齐示例），行高减半、卡体更紧凑。
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let half = (ui.available_width() * 0.5).floor().max(150.0);
+                                ui::column(ui, half, |ui| {
+                                    ui::kv(ui, "窗口句柄", &format!("0x{:X}", f.hwnd));
+                                    ui::kv(ui, "映像名", &f.exe);
+                                    ui::kv(ui, "全屏", if f.fullscreen { "是" } else { "否" });
+                                    ui::kv(ui, "映像路径", &f.path);
+                                });
+                                ui.add_space(14.0);
+                                ui::column(ui, ui.available_width().max(120.0), |ui| {
+                                    ui::kv(ui, "进程 ID", &f.pid.to_string());
+                                    ui::kv(
+                                        ui,
+                                        "窗口标题",
+                                        if f.title.is_empty() { "—" } else { &f.title },
+                                    );
+                                    ui::kv(ui, "窗口类", if f.class.is_empty() { "—" } else { &f.class });
+                                    let prio = f
+                                        .priority
+                                        .map(crate::win::process::priority_name)
+                                        .unwrap_or("—");
+                                    ui::kv(ui, "进程优先级", prio);
+                                });
+                            });
                         }
                         None => {
                             ui.label(
@@ -123,8 +135,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     }
                 });
                 ui.add(Separator::new().vertical());
-                ui.add_space(10.0);
-                ui::column(ui, right_w, |ui| {
+                ui.add_space(14.0);
+                ui::column(ui, ui.available_width().max(160.0), |ui| {
                     ui::hint(ui, "判定依据");
                     ui.horizontal_wrapped(|ui| {
                         ui::chip(ui, &state_text, if state_hit {
@@ -184,9 +196,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 .id_salt("lib")
                 .max_height(list_h)
                 .auto_shrink([false, false])
-                // 滚动条常驻：否则它会晚于布局出现，行内按钮被顶出卡片。
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                // 悬浮式滚动条覆盖在内容上、不占宽度，按需显示即可。
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
+                    // 紧凑行距（对齐示例 ~30px 行距）：行内上下留白 3、行间 4。
+                    ui.spacing_mut().item_spacing.y = LIB_ROW_GAP;
                     for (exe, name, _custom) in &entries {
                         let hit = fg
                             .as_ref()
@@ -228,7 +242,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                             egui::Frame::NONE
                                 .fill(bg)
                                 .corner_radius(6.0)
-                                .inner_margin(egui::Margin::symmetric(8, 4))
+                                .inner_margin(egui::Margin::symmetric(8, 3))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         let btn_w = 104.0;

@@ -14,16 +14,20 @@ use eframe::egui;
 use eframe::egui::RichText;
 use shadcn_egui::components::alert::{Alert, AlertVariant};
 use shadcn_egui::components::badge::BadgeVariant;
-use shadcn_egui::components::button::{Button, ButtonVariant};
+use shadcn_egui::components::button::{Button, ButtonSize, ButtonVariant};
+use shadcn_egui::components::card::{card_title, Card};
 use shadcn_egui::components::scroll_area::ScrollArea;
 use shadcn_egui::components::separator::Separator;
 use shadcn_egui::icons::lucide;
-use shadcn_egui::style::Role;
+
+/// Sm 按钮的水平内边距（vega `button_size_sm`）。「全选 / 清空」行整体左移
+/// 该值，使按钮文本与勾选列左缘对齐。
+const SM_BUTTON_PAD_X: f32 = 10.0;
+/// 「全选」与「清空」按钮之间的间距（行内默认间距已清零，手动给）。
+const SELECT_ALL_GAP: f32 = 10.0;
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
-    ui::page_title(ui, "Windows 优化", "");
-    // 页面可用宽度（Card 体内的 Ui 宽度无界，卡内分栏一律从这里推）。
-    let page_w = ui.available_width();
+    ui::page_title(ui, "Windows 优化", crate::app::Tab::WinOpt.hint());
 
     let restored = app.opt_restored;
     let enabled = !app.opt_running;
@@ -33,9 +37,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     let mut req_relaunch = false;
     let mut changed = false;
 
-    // ---------------- 运行状态（整宽卡：徽章左、操作按钮右） ----------------
-    ui::card(ui, "运行状态", |ui| {
+    // ---------------- 运行状态（紧凑卡：标题+徽章一行，说明行随后） ----------------
+    // 旧实现是「标题卡头 + 徽章行 + 按钮行 + 警告行」四层堆叠，卡高 ~150；
+    // 示例里标题、徽章、按钮同一行，说明行贴在其下，卡高砍半。
+    Card::new().size(ui::CARD_COMPACT).show(ui, |ui| {
         ui.horizontal(|ui| {
+            card_title(ui, "运行状态");
             if app.elevated {
                 ui::chip(ui, "已获得管理员权限", BadgeVariant::Secondary);
             } else {
@@ -54,17 +61,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     BadgeVariant::Secondary
                 },
             );
-            // 操作：按钮固定靠卡片右缘。
+            // 操作：按钮固定靠卡片右缘。right_to_left 先加的在最右，
+            // 按示例顺序排：执行优化（主按钮）最右，其次还原、预演。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if app.opt_running {
-                    ui.spinner();
-                    ui.label(RichText::new("执行中…").size(11.0).color(ui::muted(ui)));
+                if ui
+                    .add_enabled(enabled, Button::new("执行优化").size(ButtonSize::Sm))
+                    .clicked()
+                {
+                    req_exec = true;
                 }
                 // 只有处于「已优化」状态才有东西可还原；`restored` 表示"当前已还原"。
                 if ui
                     .add_enabled(
                         enabled && !restored,
-                        Button::new("还原").variant(ButtonVariant::Outline),
+                        Button::new("还原").variant(ButtonVariant::Outline).size(ButtonSize::Sm),
                     )
                     .on_hover_text("重启自己停过的服务、重启被结束的 Wallpaper Engine、优先级复位、电源方案还原")
                     .clicked()
@@ -72,38 +82,60 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     req_restore = true;
                 }
                 if ui
-                    .add_enabled(enabled, Button::new("执行优化"))
-                    .clicked()
-                {
-                    req_exec = true;
-                }
-                if ui
                     .add_enabled(
                         enabled,
-                        Button::new("预演（不改系统）").variant(ButtonVariant::Ghost),
+                        Button::new("预演（不改系统）")
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm),
                     )
                     .on_hover_text("逐条打印将要执行的动作，不做任何修改")
                     .clicked()
                 {
                     req_dry = true;
                 }
+                if app.opt_running {
+                    ui.spinner();
+                    ui.label(RichText::new("执行中…").size(11.0).color(ui::muted(ui)));
+                }
             });
         });
+        // 说明行：灰色提示靠左；未提权时「以管理员身份重启」按钮在右缘——
+        // 与「执行优化」同款 Sm 大小、右缘对齐，且与灰色提示文字同行对齐。
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new("未提权时这里会改为红色 Destructive 徽章，并出现「以管理员身份重启」按钮")
+                        .size(11.0)
+                        .color(ui::muted(ui)),
+                )
+                .truncate(),
+            );
+            if !app.elevated {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new("以管理员身份重启")
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm),
+                        )
+                        .clicked()
+                    {
+                        req_relaunch = true;
+                    }
+                });
+            }
+        });
         if !app.elevated {
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
+            // 黄色警告文字：普通左对齐一行。
+            // （不要把 Label 放进 right_to_left(Align::Center)：卡体竖直方向
+            // 可用高度无界，Center 对齐会落在未定义位置并撑爆卡片——实测翻车。）
+            ui.add(
+                egui::Label::new(
                     RichText::new("停服务 / 改别人的进程优先级必须提权，否则只会记录失败原因。")
                         .size(11.0)
                         .color(ui::warn(ui)),
-                );
-                if ui
-                    .add(Button::new("以管理员身份重启").variant(ButtonVariant::Outline))
-                    .clicked()
-                {
-                    req_relaunch = true;
-                }
-            });
+                ),
+            );
         }
     });
 
@@ -125,9 +157,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui::card(ui, "优化项", |ui| {
             ui::stretch_body(ui, h, 240.0);
             // B：常用项与高级项/自动化合并一卡；卡内左右两栏，中间分隔线。
+            // 行内横向间距清零，右栏吃剩余宽度：此前右栏按公式算宽，
+            // 叠加 item_spacing 后溢出 ~12px，高级项的勾选文本被卡边裁切。
+            // 两列末尾的「全选/清空」行要落在同一水平线：列内容高按上一帧
+            // 回填，矮列在按钮前补足与高列的差值（一帧收敛后逐帧稳定）。
+            let kl = ui.make_persistent_id("opt_col_common");
+            let kr = ui.make_persistent_id("opt_col_adv");
+            let hl_prev = ui.ctx().data(|d| d.get_temp::<f32>(kl.with("h"))).unwrap_or(0.0);
+            let hr_prev = ui.ctx().data(|d| d.get_temp::<f32>(kr.with("h"))).unwrap_or(0.0);
             ui.horizontal(|ui| {
-                let total = page_w - 30.0;
-                let col_w = ((total - 30.0) * 0.5).floor().max(160.0);
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let total = ui.available_width();
+                let col_w = (total * 0.5).floor().max(160.0);
                 ui::column(ui, col_w, |ui| {
                     ui.label(
                         RichText::new("常用项").size(11.0).color(ui::muted(ui)),
@@ -144,9 +185,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     changed |= ui::check_row(ui, &mut p.flush_dns, "清理 DNS 缓存");
                     changed |= ui::check_row(ui, &mut p.clean_clipboard, "清空剪贴板内容");
                     ui.add_space(6.0);
-                    // D：每组末尾「全选 / 清空」Ghost 小按钮。
+                    // 本列内容高（按钮前），供下帧对齐计算。
+                    let h_self = ui.min_rect().height();
+                    ui.add_space((hr_prev - hl_prev).max(0.0));
+                    // D：每组末尾「全选 / 清空」Ghost 小按钮。Sm 按钮自带
+                    // 10px 左内边距，行内整体左移该值，按钮文本与勾选列
+                    // 左缘对齐；两个按钮间距行内默认间距已清零、手动给。
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.add_space(-SM_BUTTON_PAD_X);
                         let on = ui::ghost_sm(ui, "全选").clicked();
+                        ui.add_space(SELECT_ALL_GAP);
                         let off = ui::ghost_sm(ui, "清空").clicked();
                         if on || off {
                             let p = &mut app.settings.opt;
@@ -162,10 +211,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                             changed = true;
                         }
                     });
+                    ui.ctx().data_mut(|d| d.insert_temp(kl.with("h"), h_self));
                 });
                 ui.add(Separator::new().vertical());
-                ui.add_space(10.0);
-                ui::column(ui, (total - col_w - 30.0).max(160.0), |ui| {
+                ui.add_space(14.0);
+                let (_cr2, _h_adv) = ui::column(ui, ui.available_width().max(160.0), |ui| {
                     ui.label(
                         RichText::new("高级项").size(11.0).color(ui::muted(ui)),
                     );
@@ -188,8 +238,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     changed |= ui::check_row(ui, &mut p.auto_on_game_start, "识别到游戏后自动执行上面的优化");
                     changed |= ui::check_row(ui, &mut p.auto_restore_on_exit, "游戏退出后自动还原");
                     ui.add_space(6.0);
+                    // 与左列按钮行平行（见上列同款注释）。
+                    let h_self = ui.min_rect().height();
+                    ui.add_space((hl_prev - hr_prev).max(0.0));
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.add_space(-SM_BUTTON_PAD_X);
                         let on = ui::ghost_sm(ui, "全选").clicked();
+                        ui.add_space(SELECT_ALL_GAP);
                         let off = ui::ghost_sm(ui, "清空").clicked();
                         if on || off {
                             let p = &mut app.settings.opt;
@@ -202,18 +258,28 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                             changed = true;
                         }
                     });
+                    ui.ctx().data_mut(|d| d.insert_temp(kr.with("h"), h_self));
                 });
             });
         })
     }, |ui, h, app| {
         ui::card(ui, "执行日志", |ui| {
             ui::stretch_body(ui, h, 240.0);
-            let max_h = ui::scroll_max(ui, h, 200.0);
+            // 行数注释放在滚动区上方：scroll_max 按游标实测扣除滚动区上方的
+            // 全部占用，卡体恰好等于等高目标、回路严格稳定。注释若放下方，
+            // 每帧会比目标多出「注释行 + 间距」的高度，卡片逐帧长高不收敛。
+            let note = if app.opt_log.is_empty() {
+                "还没有执行记录。建议先点「预演」看一眼要做什么。".to_string()
+            } else {
+                format!("{} 行 · 执行中自动滚到底", app.opt_log.len())
+            };
+            ui.label(RichText::new(note).size(11.0).color(ui::muted(ui)));
             if app.opt_log.is_empty() {
-                ui::hint(ui, "还没有执行记录。建议先点「预演」看一眼要做什么。");
                 return;
             }
-            // C：执行中 stick_to_bottom 自动滚到底。
+            // C：执行中 stick_to_bottom 自动滚到底；滚动条由 shadcn 组件
+            // 自绘（按需显示，悬浮式不占内容宽度）。
+            let max_h = ui::scroll_max(ui, h, 200.0);
             ScrollArea::vertical()
                 .id_salt("optlog")
                 .max_height(max_h)
@@ -231,15 +297,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                         ui.label(RichText::new(line).size(11.0).color(color));
                     }
                 });
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new(format!(
-                    "{} 行 · 执行中自动滚到底",
-                    app.opt_log.len()
-                ))
-                .size(10.0)
-                .color(ui::role_of(ui, Role::MutedForeground)),
-            );
         })
     });
 

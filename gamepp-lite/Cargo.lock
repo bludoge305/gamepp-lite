@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "gamepp-lite"
-version = "0.2.2"
+version = "0.2.6"
 dependencies = [
  "eframe",
  "egui",

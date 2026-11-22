@@ -18,7 +18,14 @@ use std::io::Write;
 use win::single;
 
 const APP_NAME: &str = "GamePP-Lite";
-const INSTANCE_KEY: &str = "GamePP-Lite-Core";
+/// 单实例互斥体键。开发期可用 `GPP_INSTANCE_SUFFIX` 追加后缀，让测试实例
+/// 与正在运行的正式实例并存（否则新实例只会唤醒旧的然后自己退出）。
+fn instance_key() -> String {
+    format!(
+        "GamePP-Lite-Core{}",
+        std::env::var("GPP_INSTANCE_SUFFIX").unwrap_or_default()
+    )
+}
 
 /// 追加一行运行日志（闪退时用户只需把这个文件发来）。
 pub fn log_line(tag: &str, text: &str) {
@@ -53,10 +60,10 @@ fn main() -> eframe::Result<()> {
     log_line("boot", "启动");
 
     // ① 单实例：先抢占命名内核对象，抢不到说明已有常驻实例。
-    if !single::acquire(INSTANCE_KEY) {
+    if !single::acquire(&instance_key()) {
         // 已有实例在跑：先投递唤醒信号（等价 Electron 的 second-instance），
         // 再给用户一个明确反馈 —— 否则窗口一闪而过，看起来就像"闪退"。
-        let woke = single::awake_existing(INSTANCE_KEY);
+        let woke = single::awake_existing(&instance_key());
         log_line(
             "boot",
             &format!("已有实例在运行，唤醒信号投递{}", if woke { "成功" } else { "失败" }),
@@ -78,7 +85,7 @@ fn main() -> eframe::Result<()> {
     let (tray, tray_rx) = services::tray::spawn(APP_NAME, optimized_at_boot);
 
     // ③ 唤醒监听：别的实例启动时会把我们拉到前台。
-    let awake_rx = single::spawn_awake_listener(INSTANCE_KEY);
+    let awake_rx = single::spawn_awake_listener(&instance_key());
 
     // ④ UI + 服务
     // 开发期可用 GPP_SIZE=864x608 指定逻辑窗口大小，便于在小窗口下核验排版。
