@@ -4,7 +4,17 @@ version = "0.2.2"
 edition = "2024"
 
 [dependencies]
-eframe = "0.37"
+# 用 glow（OpenGL）后端替代默认的 wgpu：wgpu-hal 30 与 windows 0.62 / 0.58
+# 双版本在上游冲突编译不过，且本项目用不到 GPU 渲染。
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "links",
+    "system_fonts",
+    "glow",
+    "web_screen_reader",
+] }
 # 与 shadcn-egui 0.8 配套的 egui 版本（crate 不 re-export egui，需显式对齐）。
 egui = "0.37"
 # UI 组件库：精确锁定 0.8.0，避免 minor 升级引入 recipe/样式破坏性变更。

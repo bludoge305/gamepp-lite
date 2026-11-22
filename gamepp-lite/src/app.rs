@@ -84,6 +84,10 @@ pub struct App {
     probe_frame: u32,
     /// 真正退出中：此时不再把"关闭窗口"拦成"收进托盘"。
     quitting: bool,
+    /// 「恢复默认设置」确认弹窗（D：危险操作二次确认）。
+    pub confirm_reset: bool,
+    /// 「退出程序」确认弹窗。
+    pub confirm_quit: bool,
     ctx: egui::Context,
 }
 
@@ -94,13 +98,26 @@ impl App {
         tray_rx: Receiver<TrayCmd>,
         awake_rx: Receiver<()>,
     ) -> Self {
-        install_cjk_font(&cc.egui_ctx);
-
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.visuals = egui::Visuals::light();
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(8.0, 4.0);
-        cc.egui_ctx.set_style(style);
+        // CJK 字体作为打底（base），主题字体在它之上安装；
+        // 再应用 shadcn vega 主题（含深色样式）并锁定深色模式。
+        let fonts = install_cjk_font(&cc.egui_ctx);
+        let theme = shadcn_egui::Theme::vega()
+            .color(
+                ui::GOOD_ROLE,
+                egui::Color32::from_rgb(0x1E, 0x8E, 0x5A),
+                egui::Color32::from_rgb(0x4A, 0xDE, 0x80),
+            )
+            .color(
+                ui::WARN_ROLE,
+                egui::Color32::from_rgb(0xC9, 0x7A, 0x11),
+                egui::Color32::from_rgb(0xFA, 0xC7, 0x75),
+            );
+        theme.apply_with_fonts(&cc.egui_ctx, fonts);
+        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+        cc.egui_ctx.style_mut_of(egui::Theme::Dark, |s| {
+            s.spacing.item_spacing = egui::vec2(10.0, 8.0);
+            s.spacing.button_padding = egui::vec2(10.0, 5.0);
+        });
 
         let mut settings = Settings::load();
         let library = GameLibrary::load();
@@ -160,6 +177,8 @@ impl App {
             shot_frame: 0,
             probe_frame: 0,
             quitting: false,
+            confirm_reset: false,
+            confirm_quit: false,
             ctx: cc.egui_ctx.clone(),
         };
         if std::env::var("GPP_OPT_DRY").is_ok() {
@@ -493,77 +512,76 @@ impl App {
 
     // ---------------------------------------------------------------- 布局
 
-    fn header(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("hdr")
+    fn header(&mut self, ui: &mut egui::Ui) {
+        use shadcn_egui::components::badge::BadgeVariant;
+        egui::Panel::top("hdr")
             .frame(
                 egui::Frame::NONE
-                    .fill(egui::Color32::WHITE)
+                    .fill(ui::role_of(ui, shadcn_egui::style::Role::Card))
                     .inner_margin(egui::Margin::symmetric(14, 10)),
             )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("GamePP-Lite")
-                            .size(18.0)
-                            .strong()
-                            .color(ui::ACCENT),
-                    );
-                    ui.label(
-                        egui::RichText::new("游戏识别 · Windows 优化")
-                            .size(11.0)
-                            .color(ui::MUTED),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (state_text, color) = {
-                            let s = self.services.shared.lock().unwrap_or_else(|e| e.into_inner());
+            .show(ui, |ui| {
+                shadcn_egui::layout::space_between(
+                    ui,
+                    |ui| {
+                        ui.label(
+                            egui::RichText::new("GamePP-Lite")
+                                .size(18.0)
+                                .strong()
+                                .color(ui::role_of(ui, shadcn_egui::style::Role::Foreground)),
+                        );
+                        ui.label(
+                            egui::RichText::new("游戏识别 · Windows 优化")
+                                .size(11.0)
+                                .color(ui::muted(ui)),
+                        );
+                    },
+                    |ui| {
+                        let (state_text, variant) = {
+                            let s =
+                                self.services.shared.lock().unwrap_or_else(|e| e.into_inner());
                             match &s.detect {
                                 DetectState::InGame { name, .. } => {
-                                    (format!("游戏中：{name}"), ui::GOOD)
+                                    (format!("游戏中：{name}"), BadgeVariant::Default)
                                 }
                                 DetectState::Candidate { exe, .. } => {
-                                    (format!("候选中：{exe}"), ui::WARN)
+                                    (format!("候选中：{exe}"), BadgeVariant::Secondary)
                                 }
-                                DetectState::Idle => ("未识别到游戏".to_string(), ui::MUTED),
+                                DetectState::Idle => ("未识别到游戏".to_string(), BadgeVariant::Outline),
                             }
                         };
-                        ui::chip(ui, &state_text, color);
+                        ui::chip(ui, &state_text, variant);
                         if self.elevated {
-                            ui::chip(ui, "管理员", ui::GOOD);
+                            ui::chip(ui, "管理员", BadgeVariant::Secondary);
                         }
                         if self.services.shared.lock().map(|s| s.running).unwrap_or(false) {
-                            ui::chip(ui, "服务运行中", ui::ACCENT);
+                            ui::chip(ui, "服务运行中", BadgeVariant::Secondary);
                         }
-                    });
-                });
+                    },
+                );
             });
     }
 
-    fn nav(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("nav")
+    fn nav(&mut self, ui: &mut egui::Ui) {
+        use shadcn_egui::components::button::{Button, ButtonVariant};
+        egui::Panel::left("nav")
             .resizable(false)
-            .exact_width(180.0)
+            .exact_size(180.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(ui::PANEL)
+                    .fill(ui::role_of(ui, shadcn_egui::style::Role::Card))
                     .inner_margin(egui::Margin::symmetric(10, 12)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 for tab in [Tab::Detect, Tab::WinOpt, Tab::Settings] {
                     let selected = self.tab == tab;
-                    let text = egui::RichText::new(tab.label())
-                        .size(13.0)
-                        .color(if selected {
-                            egui::Color32::WHITE
+                    let btn = Button::new(tab.label())
+                        .variant(if selected {
+                            ButtonVariant::Secondary
                         } else {
-                            egui::Color32::from_rgb(0x2A, 0x2F, 0x38)
-                        });
-                    let btn = egui::Button::new(text)
-                        .fill(if selected {
-                            ui::ACCENT
-                        } else {
-                            egui::Color32::TRANSPARENT
+                            ButtonVariant::Ghost
                         })
-                        .min_size(egui::vec2(154.0, 32.0));
+                        .expanded(true);
                     if ui.add(btn).on_hover_text(tab.hint()).clicked() {
                         self.tab = tab;
                     }
@@ -572,46 +590,55 @@ impl App {
             });
     }
 
-    fn footer(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status")
+    fn footer(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status")
             .frame(
                 egui::Frame::NONE
-                    .fill(egui::Color32::WHITE)
+                    .fill(ui::role_of(ui, shadcn_egui::style::Role::Card))
                     .inner_margin(egui::Margin::symmetric(14, 6)),
             )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0);
-                    let (text, color) = match &self.status {
-                        Some((t, until)) if *until > now => (t.clone(), ui::MUTED),
-                        _ => {
-                            let s = self.services.shared.lock().unwrap_or_else(|e| e.into_inner());
-                            match s.log.back() {
-                                Some(l) => (
-                                    format!("[{}] {}", ui::clock(l.epoch), l.text),
-                                    match l.level {
-                                        Level::Warn => ui::WARN,
-                                        Level::Action => ui::GOOD,
-                                        Level::Info => ui::MUTED,
-                                    },
-                                ),
-                                None => ("就绪".to_string(), ui::MUTED),
+            .show(ui, |ui| {
+                shadcn_egui::layout::space_between(
+                    ui,
+                    |ui| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0);
+                        let (text, color) = match &self.status {
+                            Some((t, until)) if *until > now => {
+                                (t.clone(), ui::muted(ui))
                             }
-                        }
-                    };
-                    ui.label(egui::RichText::new(text).size(11.0).color(color));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            _ => {
+                                let s = self
+                                    .services
+                                    .shared
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                match s.log.back() {
+                                    Some(l) => (
+                                        format!("[{}] {}", ui::clock(l.epoch), l.text),
+                                        match l.level {
+                                            Level::Warn => ui::warn(ui),
+                                            Level::Action => ui::good(ui),
+                                            Level::Info => ui::muted(ui),
+                                        },
+                                    ),
+                                    None => ("就绪".to_string(), ui::muted(ui)),
+                                }
+                            }
+                        };
+                        ui.label(egui::RichText::new(text).size(11.0).color(color));
+                    },
+                    |ui| {
                         let s = self.services.shared.lock().unwrap_or_else(|e| e.into_inner());
                         ui.label(
                             egui::RichText::new(format!("轮询 {} 次", s.polls))
                                 .size(11.0)
-                                .color(ui::MUTED),
+                                .color(ui::muted(ui)),
                         );
-                    });
-                });
+                    },
+                );
             });
     }
 
@@ -643,29 +670,28 @@ impl App {
         };
         self.shot_frame += 1;
         if self.shot_frame == 6 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
-        }
-        let shot = ctx.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
-        if let Some(img) = shot {
-            save_bmp(&path, &img);
-            crate::log_line("shot", &format!("截图已保存 {path}"));
+            // egui 0.37：截图改为 ScreenshotCallback（回调直接拿到 ColorImage）。
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                egui::ScreenshotCallback::new(move |img| save_bmp(&path, &img)),
+            ));
         }
     }
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 窗口隐藏时（收进托盘）eframe 不跑 UI pass，但 logic 仍会被调用：
+        // 托盘命令、后台消息、配置同步都放在这里。
         self.handle_tray();
         self.handle_notices();
         self.poll_opt();
         if self.dirty {
             self.sync_cfg();
         }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
 
         // 关闭按钮 → 收进托盘（等价 Electron 的 close to tray）。
         if ctx.input(|i| i.viewport().close_requested())
@@ -677,19 +703,21 @@ impl eframe::App for App {
             self.toast("已最小化；程序仍在托盘里运行，双击图标可恢复");
         }
 
-        self.header(ctx);
-        self.nav(ctx);
-        self.footer(ctx);
+        self.header(ui);
+        self.nav(ui);
+        self.footer(ui);
 
-        egui::CentralPanel::default()
+        egui::CentralPanel::default_margins()
             .frame(
                 egui::Frame::NONE
-                    .fill(ui::PANEL)
+                    .fill(ui::role_of(ui, shadcn_egui::style::Role::Background))
                     .inner_margin(egui::Margin::same(14)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
+                // 滚动条常驻：否则它会晚于布局出现，页面宽度先宽后窄导致卡片溢出窗口。
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| match self.tab {
                         Tab::Detect => ui::detect::show(ui, self),
                         Tab::WinOpt => ui::winopt::show(ui, self),
@@ -697,7 +725,7 @@ impl eframe::App for App {
                     });
             });
 
-        self.dev_hooks(ctx);
+        self.dev_hooks(&ctx);
         ctx.request_repaint_after(Duration::from_millis(600));
     }
 }
@@ -720,19 +748,19 @@ fn initial_tab() -> Tab {
     }
 }
 
-/// 安装中文字体。
+/// 安装中文字体，返回以 CJK 打底的字体定义（供 `Theme::apply_with_fonts` 用）。
 ///
 /// egui 自带字体只有拉丁字形，中文会渲染成「□□□」。这里直接读 Windows 系统字体
 /// （不打包字体文件，避免仓库体积与授权问题），按可用性依次尝试微软雅黑 / 等线 /
 /// 黑体 / 宋体，并把它放在字体表首位，让中英文使用同一套字形。
-fn install_cjk_font(ctx: &egui::Context) {
+fn install_cjk_font(_ctx: &egui::Context) -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
     for name in ["msyh.ttc", "Deng.ttf", "simhei.ttf", "simsun.ttc", "msyhl.ttc"] {
         let path = std::path::Path::new(&windir).join("Fonts").join(name);
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let mut fonts = egui::FontDefinitions::default();
         let mut data = egui::FontData::from_owned(bytes);
         // .ttc 是字体集合，取第 0 个字面（Regular）。
         data.index = 0;
@@ -746,9 +774,9 @@ fn install_cjk_font(ctx: &egui::Context) {
                 .or_default()
                 .insert(0, "cjk".to_owned());
         }
-        ctx.set_fonts(fonts);
-        return;
+        break;
     }
+    fonts
 }
 
 /// 把 ColorImage 写成 24 位 BMP（不引图片编码库）。
