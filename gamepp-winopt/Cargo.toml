@@ -1,0 +1,15 @@
+[package]
+name = "gamepp-winopt"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone Rust re-implementation of the GamePP 'Windows 优化' module"
+publish = false
+
+[[bin]]
+name = "gamepp-winopt"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2
+lto = false
+strip = true

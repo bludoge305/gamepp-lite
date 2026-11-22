@@ -1,0 +1,10 @@
+# 统一以 LF 入库；克隆时文本文件按本地约定换行
+* text=auto
+
+# Windows 批处理必须保持 CRLF（LF 会让 cmd 的 goto/label 解析出问题）
+*.cmd text eol=crlf
+
+# 二进制资源不做任何转换
+*.png binary
+*.ico binary
+*.exe binary

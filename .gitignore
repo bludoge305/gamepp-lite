@@ -1,0 +1,19 @@
+# Rust 构建产物
+target/
+
+# 安装包等构建产物（发布走 GitHub Releases，不进仓库）
+dist/
+
+# WorkBuddy 工作区本地数据
+.workbuddy/
+
+# 逆向过程从目标程序提取的大体积转储（版权物料，不入公开仓库）
+# 保留 analysis/ 下的脚本与两份小型特征表转储（内容与 opt-data/ 一致）
+analysis/main.jsc
+analysis/main_strings.txt
+analysis/strings.txt
+analysis/va_strings.txt
+
+# 系统杂项
+Thumbs.db
+Desktop.ini
