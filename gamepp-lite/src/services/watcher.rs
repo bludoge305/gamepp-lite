@@ -8,7 +8,7 @@
 //! 或由 ② 页里的两个自动化开关驱动。
 
 use super::{now_epoch, Config, DetectState, Level, Session, SessionSummary, Shared, UiNotice};
-use crate::domain::games::{Confidence, GameLibrary};
+use crate::domain::games::{self, Confidence, GameLibrary};
 use crate::win::{foreground, process};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -18,7 +18,13 @@ use std::time::Duration;
 ///
 /// 图形运行时由 `foreground::current()` 在采样时一并取好（带缓存），这里只读结果，
 /// 不再重复枚举模块。
+///
+/// 黑名单最先判定：命中 `domain::games::DENY_LIST` 的进程（如截图工具）
+/// 无论是游戏库命中还是启发式命中都直接排除。
 fn classify(lib: &GameLibrary, fg: &foreground::Foreground) -> Option<(String, Confidence)> {
+    if games::is_denied(&fg.exe) {
+        return None;
+    }
     if let Some(entry) = lib.lookup(&fg.exe) {
         return Some((entry.name.clone(), Confidence::Matched));
     }

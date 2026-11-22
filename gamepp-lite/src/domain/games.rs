@@ -14,6 +14,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 识别黑名单：命中这些映像名的进程**永远不判为游戏**，在识别阶段直接排除。
+///
+/// 用途：一些常用工具会同时满足"全屏 + 加载图形运行时"的启发式条件（或碰巧与
+/// 游戏库条目同名），把它们过滤在这里，其余应用的识别不受影响。
+/// 匹配规则：映像名大小写不敏感的**精确**匹配（不是子串，避免误伤）。
+pub const DENY_LIST: &[&str] = &[
+    "SnowAir-Lite.exe", // 截图工具
+];
+
+/// 映像名是否命中识别黑名单。
+pub fn is_denied(exe: &str) -> bool {
+    DENY_LIST.iter().any(|d| d.eq_ignore_ascii_case(exe))
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Confidence {
     /// 命中游戏库。
