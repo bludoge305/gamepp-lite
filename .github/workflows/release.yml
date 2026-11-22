@@ -24,17 +24,20 @@ jobs:
           update: false
           path-type: inherit
           install: mingw-w64-x86_64-binutils mingw-w64-x86_64-gcc
+          suppress-deprecation-warnings: msystem-mingw64
 
-      - name: Install Rust (x86_64-pc-windows-gnu)
+      # 锁定与本地验证过的工具链一致：新版 cargo 会忽略提交的 Cargo.lock 重新解析
+      # （MSRV-aware resolver），把 accesskit 等依赖升到不兼容的版本，wgpu-hal 编不过。
+      - name: Install Rust 1.99.1 (x86_64-pc-windows-gnu)
         run: |
-          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
-          rustup default stable-x86_64-pc-windows-gnu
+          rustup toolchain install 1.99.1-x86_64-pc-windows-gnu --profile minimal
+          rustup default 1.99.1-x86_64-pc-windows-gnu
 
       - name: Build gamepp-lite (release)
         shell: pwsh
         run: |
           $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
-          cargo build --release --manifest-path gamepp-lite/Cargo.toml
+          cargo build --release --locked --manifest-path gamepp-lite/Cargo.toml
 
       - name: Install NSIS
         run: choco install nsis -y --no-progress
