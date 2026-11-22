@@ -31,9 +31,9 @@ target\release\gamepp-lite.exe
 
 ```cmd
 build-installer.cmd                                 :: 在仓库根目录执行
-dist\gamepp-lite-setup-0.2.0.exe                    :: 交互式
-dist\gamepp-lite-setup-0.2.0.exe /S /D=D:\Tools\Lite :: 静默
-dist\gamepp-lite-setup-0.2.0.exe /uninstall          :: 卸载
+dist\gamepp-lite-setup-0.2.1.exe                    :: 交互式
+dist\gamepp-lite-setup-0.2.1.exe /S /D=D:\Tools\Lite :: 静默
+dist\gamepp-lite-setup-0.2.1.exe /uninstall          :: 卸载
 ```
 
 > Windows 优化需要管理员权限：② 页顶部有「以管理员身份重启」，未提权时只会记录"已跳过"。

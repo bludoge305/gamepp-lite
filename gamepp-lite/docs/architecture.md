@@ -244,33 +244,45 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 
 ---
 
-## 9. 安装器
+## 9. 安装器（NSIS）
 
-`gamepp-winopt-installer/` 升级为 `gamepp-lite-setup.exe`：
-
-```
-build.rs   把 gamepp-lite.exe / README / 逆向报告 / 架构文档 嵌入 payload
-main.rs    释放文件 → 写卸载项 → 建快捷方式 → 可选立即启动
-```
+`installer/gamepp-lite.nsi` 是 NSIS 3 脚本，`build-installer.cmd` 在构建主程序后调用
+`makensis` 打包；产物从 15MB 压到约 4MB（lzma 固实压缩）。曾用零依赖 Rust 自研安装器，
+已按"主流打包方式"决策替换为 NSIS。
 
 ```cmd
-gamepp-lite-setup.exe                       交互式安装（会问目录/快捷方式/是否启动）
-gamepp-lite-setup.exe /S /D=D:\Tools\Lite   静默安装（/D 必须放最后）
-gamepp-lite-setup.exe /uninstall            卸载
-gamepp-lite-setup.exe --dry-run             只打印计划
+gamepp-lite-setup.exe                       交互式向导（许可 → 目录 → 安装 → 完成页可勾选运行）
+gamepp-lite-setup.exe /S /D=D://Tools//Lite   静默安装（/D 必须放最后）
+gamepp-lite-setup.exe /S /desktop           静默安装并创建桌面快捷方式
+gamepp-lite-setup.exe /S /run               装完立即启动
+gamepp-lite-setup.exe /S /noshortcuts       不创建快捷方式
+gamepp-lite-setup.exe /S /noregistry        不写控制面板卸载项
+gamepp-lite-setup.exe /uninstall            卸载（复用安装包本体）
 ```
 
-安装到 `C:\Program Files\GamePP-Lite` 需要提权，安装器会自动 `runas` 重启自己；
-装到用户可写目录则不需要。卸载会删除快捷方式、卸载项与整个安装目录（卸载器自身登记重启后删除）。
+实现要点（踩过的坑）：
 
-> 注意：在 Git Bash 里测试时 `/S`、`/D=…` 会被 MSYS 当路径改写，请用 `--silent`、`--dir`。
+- **`SetRegView 64`**：NSIS 本体是 32 位进程，不加这一句 HKLM 卸载项会写进
+  `WOW6432Node`，"程序和功能"里看不到。安装（`.onInit`）与卸载（`un.onInit`）都要设。
+- 卸载项写 `HKLM\...\Uninstall\GamePP-Lite`（DisplayName/DisplayVersion/InstallLocation/
+  UninstallString/QuietUninstallString/EstimatedSize/NoModify/NoRepair）；
+  卸载时顺带清掉应用自己写的 `HKCU\...\Run\GamePPLite`（开机自启）。
+- 脚本文件必须带 **UTF-8 BOM**（`Unicode true` 下无 BOM 会按 ANSI 解析，中文乱码）。
+- 快捷方式用 `SetShellVarContext all` 建到公共开始菜单（%ProgramData%）与公共桌面。
+- `RequestExecutionLevel admin`：装到 Program Files 必然提权（与 Inno 默认行为一致）。
+- 卸载只删除安装过的文件，目录里有用户自己的文件时 `RMDir` 安全失败。
+
+已实测（Windows 11，NSIS 3.13）：静默安装到临时目录 → 文件齐全 → 64 位卸载项可见 →
+`uninstall.exe /S` 静默卸载后目录/注册表/快捷方式全部清除。
+
+> 注意：在 Git Bash 里测试时 `/S`、`/D=…` 会被 MSYS 当路径改写，请改用 cmd 调用。
 
 ---
 
 ## 10. 构建
 
 ```cmd
-build-installer.cmd        :: 主程序 + 安装包 → dist\gamepp-lite-setup-0.2.0.exe
+build-installer.cmd        :: 主程序 + NSIS 安装包 → dist\gamepp-lite-setup-<版本>.exe
 gamepp-lite\build.cmd      :: 只构建主程序
 ```
 

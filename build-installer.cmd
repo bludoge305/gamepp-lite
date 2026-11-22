@@ -12,27 +12,33 @@ if errorlevel 1 (
   if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "CARGO=%USERPROFILE%\.cargo\bin\cargo.exe"
 )
 
-rem dist file name follows the installer's Cargo.toml version (no drift)
-set "VER="
-for /f "tokens=2 delims==" %%v in ('findstr /b /c:"version" gamepp-winopt-installer\Cargo.toml') do if not defined VER set "VER=%%v"
-if defined VER set "VER=%VER: =%"
-set VER=%VER:"=%
-if not defined VER (
-  echo Cannot read version from gamepp-winopt-installer\Cargo.toml
+rem locate makensis (NSIS 3)
+set "MAKENSIS="
+if defined NSIS_HOME if exist "%NSIS_HOME%\makensis.exe" set "MAKENSIS=%NSIS_HOME%\makensis.exe"
+if not defined MAKENSIS if exist "%ProgramFiles(x86)%\NSIS\makensis.exe" set "MAKENSIS=%ProgramFiles(x86)%\NSIS\makensis.exe"
+if not defined MAKENSIS if exist "%ProgramFiles%\NSIS\makensis.exe" set "MAKENSIS=%ProgramFiles%\NSIS\makensis.exe"
+if not defined MAKENSIS (
+  echo NSIS not found. Install with: winget install NSIS.NSIS
   exit /b 1
 )
 
-echo [1/3] building gamepp-lite ...
+rem dist file name follows gamepp-lite's Cargo.toml version
+set "VER="
+for /f "tokens=2 delims==" %%v in ('findstr /b /c:"version" gamepp-lite\Cargo.toml') do if not defined VER set "VER=%%v"
+if defined VER set "VER=%VER: =%"
+set VER=%VER:"=%
+if not defined VER (
+  echo Cannot read version from gamepp-lite\Cargo.toml
+  exit /b 1
+)
+
+echo [1/2] building gamepp-lite (release) ...
 "%CARGO%" build --release --manifest-path gamepp-lite\Cargo.toml
 if errorlevel 1 goto fail
 
-echo [2/3] building installer (embeds the exe built above) ...
-"%CARGO%" build --release --manifest-path gamepp-winopt-installer\Cargo.toml
-if errorlevel 1 goto fail
-
-echo [3/3] publishing to dist\ ...
+echo [2/2] packing installer with NSIS (v%VER%) ...
 if not exist dist mkdir dist
-copy /y gamepp-winopt-installer\target\release\gamepp-lite-setup.exe dist\gamepp-lite-setup-%VER%.exe >nul
+"%MAKENSIS%" /DVERSION=%VER% /DOUTFILE="%~dp0dist\gamepp-lite-setup-%VER%.exe" "%~dp0installer\gamepp-lite.nsi"
 if errorlevel 1 goto fail
 
 echo.

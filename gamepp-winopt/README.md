@@ -8,8 +8,7 @@ GamePP「游戏优化 → Windows 优化」模块的独立 Rust 复刻（零第�
 ## 获取
 
 本工程**没有安装包**：`cargo build --release` 后把 `target\release\gamepp-winopt.exe` 拷走即可
-（单文件、零依赖）。仓库里的 `gamepp-winopt-installer/` 现在打包的是图形版 `gamepp-lite`，
-与本工程无关。
+（单文件、零依赖）。仓库里的 `installer/`（NSIS）打包的是图形版 `gamepp-lite`，与本工程无关。
 
 ## 从源码编译
 

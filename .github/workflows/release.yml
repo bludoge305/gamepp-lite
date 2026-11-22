@@ -1,0 +1,64 @@
+# push v* 标签 → 构建 windows-gnu 主程序 + NSIS 安装包 → 自动发 GitHub Release。
+# 本地等价流程：build-installer.cmd
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup 的 windows-gnu 工具链编译 raw-dylib 需要 dlltool + as；
+      # rustup 自带的 dlltool 缺 as.exe，所以用 msys2 的完整 binutils（含 windres）。
+      - name: Install MinGW binutils (dlltool / as / windres)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          path-type: inherit
+          install: mingw-w64-x86_64-binutils mingw-w64-x86_64-gcc
+
+      - name: Install Rust (x86_64-pc-windows-gnu)
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          rustup default stable-x86_64-pc-windows-gnu
+
+      - name: Build gamepp-lite (release)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          cargo build --release --manifest-path gamepp-lite/Cargo.toml
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Pack installer
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $v = $env:TAG -replace '^v', ''
+          & "C:\Program Files (x86)\NSIS\makensis.exe" `
+            /DVERSION=$v `
+            /DOUTFILE="$PWD\dist\gamepp-lite-setup-$v.exe" `
+            "$PWD\installer\gamepp-lite.nsi"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $v = $env:TAG -replace '^v', ''
+          gh release create "$env:TAG" "dist/gamepp-lite-setup-$v.exe" `
+            --title "GamePP-Lite $v" `
+            --generate-notes

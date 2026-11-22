@@ -16,13 +16,12 @@ Rust 复刻：带图形界面的 `GamePP-Lite`、零依赖命令行版 `gamepp-w
 │   ├── docs/architecture.md    设计文档
 │   └── qa/                     界面截图
 ├── gamepp-winopt/              命令行版（零依赖，只做 Windows 优化）
-├── gamepp-winopt-installer/    安装 / 卸载器（打包 gamepp-lite）
+├── installer/                  NSIS 安装脚本（打包 gamepp-lite → dist/setup exe）
 ├── analysis/                   逆向过程中用的脚本与转储
-├── dist/                       构建产物（安装包）
-└── build-installer.cmd         一键构建（主程序 → 安装包 → dist）
+├── .github/workflows/          push tag 自动构建 + 发 GitHub Release
+├── dist/                       构建产物（安装包，不入库）
+└── build-installer.cmd         一键构建（主程序 → NSIS 安装包 → dist）
 ```
-
-> 目录名 `gamepp-winopt-installer` 是历史遗留：它现在打包的是 `gamepp-lite`。
 
 ## 快速开始
 
@@ -30,8 +29,8 @@ Rust 复刻：带图形界面的 `GamePP-Lite`、零依赖命令行版 `gamepp-w
 
 ```
 build-installer.cmd                              :: 先构建
-dist\gamepp-lite-setup-0.2.0.exe                 :: 交互式安装
-dist\gamepp-lite-setup-0.2.0.exe /S /D=D:\Tools\GamePP-Lite
+dist\gamepp-lite-setup-0.2.1.exe                 :: 交互式安装
+dist\gamepp-lite-setup-0.2.1.exe /S /D=D:\Tools\GamePP-Lite
 ```
 
 只用命令行版：
@@ -89,7 +88,7 @@ gamepp-winopt.exe stop
 
 - 逆向报告：`report/gamepp-four-features-reverse-report.md`
 - 架构设计：`gamepp-lite/docs/architecture.md`
-- 一键构建（主程序 + 安装包）：`build-installer.cmd` → `dist\gamepp-lite-setup-0.2.0.exe`
+- 一键构建（主程序 + 安装包）：`build-installer.cmd` → `dist\gamepp-lite-setup-0.2.1.exe`
 - 只构建主程序：`gamepp-lite\build.cmd`
 
 ## 两个程序的关系
