@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::ffi;
 use crate::power;
 use crate::process;
+use crate::protect;
 use crate::service::{self, StopOutcome};
 use crate::state::State;
 
@@ -39,11 +40,23 @@ fn winexec(cmd: &str) {
 /// 执行一次 Windows 优化。返回新的运行状态（调用方负责落盘）。
 pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
     let mut st = State {
-        optimized: true,
+        optimized: false,
         cores: opts.cores,
         game_pid: opts.game_pid,
         ..Default::default()
     };
+
+    // 上一次 start 还没 stop 就重复执行时，把旧记录并进来：那些服务/电源方案仍是
+    // 我们改的，覆盖掉就再也还原不回来。
+    if !opts.dry_run {
+        let prev = State::load();
+        if prev.optimized {
+            st.stopped_services = prev.stopped_services;
+            st.prev_plan = prev.prev_plan;
+            st.plan_switched = prev.plan_switched;
+            println!("  - 检测到上一次优化尚未还原，本次在原记录上继续累加");
+        }
+    }
 
     println!("[begin] game_id=0x{:x} pid={} cores={} dry_run={}", opts.game_id, opts.game_pid, opts.cores, opts.dry_run);
 
@@ -100,11 +113,19 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
     }
 
     // ⑥ [cfg+0x14] 释放物理内存：对**全部**进程（不按会话过滤）+ EmptyWorkingSet
+    //
+    // 安全边界：受保护白名单内的系统组件不裁剪工作集（原版无差别处理，
+    // 会让 lsass/Defender 等随后大量缺页重入，反而更卡）。
     if cfg.ai_memory {
         println!("  - 释放内存: SetProcessWorkingSetSize(-1,-1) + EmptyWorkingSet");
         if !opts.dry_run {
             let mut ok = 0usize;
+            let mut skipped = 0usize;
             for p in process::list_processes(false) {
+                if process::protected_reason(p.pid, &p.name).is_some() {
+                    skipped += 1;
+                    continue;
+                }
                 unsafe {
                     let h = ffi::OpenProcess(ffi::PROCESS_ALL_ACCESS, 1, p.pid);
                     if h.is_null() {
@@ -116,13 +137,20 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
                     ok += 1;
                 }
             }
-            println!("    已处理 {} 个进程", ok);
+            println!(
+                "    已处理 {} 个进程（跳过 {} 个受保护组件）",
+                ok, skipped
+            );
         }
     }
 
     // ⑦ 停服务（sub_100141e0(1)）
     for (name, enabled) in service::services(cfg) {
         if !enabled {
+            continue;
+        }
+        if protect::service_protected(name) {
+            println!("  - 跳过受保护服务: {}（系统组件白名单）", name);
             continue;
         }
         if opts.dry_run {
@@ -172,6 +200,11 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
                     println!("  - 电源方案（已导入方案直连）: {} → {}", prev, new_guid);
                     st.prev_plan = Some(prev);
                     st.plan_switched = true;
+                } else if opts.pow_path.is_some() {
+                    println!(
+                        "  - {}，且系统里也没有已导入的 GPP 方案；跳过电源切换",
+                        hint
+                    );
                 } else {
                     println!(
                         "  - {}，且系统里也没有已导入的 GPP 方案；跳过电源切换\n    \
@@ -205,6 +238,9 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
     // ⑪ 优先级 / 亲和性（原版 sub_10016580 → sub_100174a0）
     apply_priority(cfg, opts);
 
+    // 只有确实留下可还原改动才标记为"已优化"：否则 stop 会退化成把全会话
+    // 进程优先级压回 NORMAL（会连带改掉用户自己设成 HIGH 的进程）。
+    st.optimized = !opts.dry_run && (!st.stopped_services.is_empty() || st.plan_switched);
     st
 }
 
@@ -244,6 +280,11 @@ fn apply_priority(cfg: &Config, opts: &BeginOptions) {
 
     for p in &procs {
         if process::match_any(&p.name, &patterns).is_none() {
+            continue;
+        }
+        // 白名单：系统组件不改优先级、不改亲和性（特征表里有通用短子串，会命中系统进程）。
+        if let Some(reason) = process::protected_reason(p.pid, &p.name) {
+            println!("  - 跳过优先级调整（受保护组件）: {} ({}) — {}", p.name, p.pid, reason);
             continue;
         }
         unsafe {
@@ -327,7 +368,13 @@ pub fn restore(cfg: &Config, st: &mut State, dry_run: bool) {
     }
 
     let mut touched = 0usize;
+    let mut skipped = 0usize;
     for p in process::list_processes(true) {
+        // 复位也是"改动别人的进程"：系统组件一律不碰。
+        if process::protected_reason(p.pid, &p.name).is_some() {
+            skipped += 1;
+            continue;
+        }
         unsafe {
             let h = ffi::OpenProcess(ffi::PROCESS_ALL_ACCESS, 0, p.pid);
             if h.is_null() {
@@ -341,7 +388,10 @@ pub fn restore(cfg: &Config, st: &mut State, dry_run: bool) {
             touched += 1;
         }
     }
-    println!("  - 已把 {} 个进程的优先级复位为 NORMAL", touched);
+    println!(
+        "  - 已把 {} 个进程的优先级复位为 NORMAL（跳过 {} 个受保护组件）",
+        touched, skipped
+    );
 
     // 3) 电源方案还原
     if st.plan_switched {

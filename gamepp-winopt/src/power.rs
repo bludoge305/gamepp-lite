@@ -18,7 +18,11 @@ use crate::ffi;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
-type PowerImportPowerSchemeFn = unsafe extern "system" fn(*const u16, *mut ffi::GUID) -> u32;
+// 依据 Power.dll!PP_Initialization 的反编译调用 `PowerImportPowerScheme(0, &guid, &out)`：
+// 三参数 —— RootPowerKey（传 0 表示默认根键）、.pow 路径、输出 GUID。原实现只声明了两个
+// 参数，第三个参数会读到寄存器里的垃圾值，属于"要么崩、要么永不生效"的 ABI 错误。
+type PowerImportPowerSchemeFn =
+    unsafe extern "system" fn(*mut c_void, *const u16, *mut ffi::GUID) -> u32;
 type PowerSetActiveSchemeFn = unsafe extern "system" fn(*mut c_void, *const ffi::GUID) -> u32;
 type PowerGetActiveSchemeFn = unsafe extern "system" fn(*mut c_void, *mut *mut ffi::GUID) -> u32;
 
@@ -115,7 +119,11 @@ pub fn import_pow(path: &str) -> Option<String> {
         let import = api.import?;
         let w = ffi::wide(path);
         let mut g = ffi::GUID::zeroed();
-        if import(w.as_ptr(), &mut g) != 0 {
+        if import(std::ptr::null_mut(), w.as_ptr(), &mut g) != 0 {
+            return None;
+        }
+        // 全零 GUID 说明导入没真正落地（ABI 不匹配时会这样），不能当成成功。
+        if g.data1 == 0 && g.data2 == 0 && g.data3 == 0 && g.data4 == [0u8; 8] {
             return None;
         }
         Some(format_guid(&g))

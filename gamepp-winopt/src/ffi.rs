@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)] // Win32 类型名按官方写法保留（HANDLE / DWORD..）
 //! 最小 Win32 FFI 声明。
 //!
 //! 只声明本模块实际用到的那部分 API —— 与 GamePPOptimize.node 的导入表一致：
@@ -30,6 +31,7 @@ pub const WAIT_OBJECT_0: DWORD = 0;
 // ---- 由反汇编确认的常量 ------------------------------------------------------
 pub const PROCESS_TERMINATE: DWORD = 0x0001;
 pub const PROCESS_QUERY_INFORMATION: DWORD = 0x0400;
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 pub const PROCESS_ALL_ACCESS: DWORD = 0x001F_FFFF;
 pub const TH32CS_SNAPPROCESS: DWORD = 0x0000_0002;
 
@@ -126,6 +128,12 @@ extern "system" {
     pub fn Process32NextW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
     pub fn ProcessIdToSessionId(pid: DWORD, session: *mut DWORD) -> BOOL;
     pub fn GetCurrentProcessId() -> DWORD;
+    pub fn QueryFullProcessImageNameW(
+        h: HANDLE,
+        flags: DWORD,
+        buf: *mut u16,
+        size: *mut DWORD,
+    ) -> BOOL;
     pub fn Sleep(ms: DWORD);
     pub fn WinExec(cmd: LPCSTR, show: u32) -> u32;
     pub fn GetPrivateProfileIntW(section: LPCWSTR, key: LPCWSTR, default: i32, file: LPCWSTR) -> u32;

@@ -58,9 +58,10 @@ impl State {
                 "game_pid" => st.game_pid = v.parse().unwrap_or(0),
                 "plan_switched" => st.plan_switched = v == "1",
                 "prev_plan" => st.prev_plan = if v.is_empty() { None } else { Some(v.to_string()) },
-                "stopped_services" => st.stopped_services = split_list(v),
-                // 记录用 ';' 分隔（Windows 路径基本不含 ';'）；也容忍 ','。
-                "killed_wallpaper" => st.killed_wallpaper = split_list(v),
+                // 服务名不含分隔符，逗号/分号都容忍。
+                "stopped_services" => st.stopped_services = split_list(v, &[',', ';']),
+                // 路径里可能有逗号（"C:\Games, Inc\wp.exe"），只按分号切。
+                "killed_wallpaper" => st.killed_wallpaper = split_list(v, &[';']),
                 _ => {}
             }
         }
@@ -87,7 +88,7 @@ impl State {
             self.stopped_services.join(","),
             self.killed_wallpaper.join(";")
         );
-        let _ = fs::write(&path, body);
+        let _ = crate::domain::settings::write_atomic(&path, &body);
     }
 
     pub fn clear() {
@@ -98,8 +99,8 @@ impl State {
     }
 }
 
-fn split_list(v: &str) -> Vec<String> {
-    v.split([',', ';'])
+fn split_list(v: &str, seps: &[char]) -> Vec<String> {
+    v.split(seps)
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()

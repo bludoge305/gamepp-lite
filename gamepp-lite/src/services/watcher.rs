@@ -9,6 +9,7 @@
 
 use super::{now_epoch, Config, DetectState, Level, Session, SessionSummary, Shared, UiNotice};
 use crate::domain::games::{self, Confidence, GameLibrary};
+use crate::domain::protect;
 use crate::win::{foreground, process};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -19,9 +20,17 @@ use std::time::Duration;
 /// 图形运行时由 `foreground::current()` 在采样时一并取好（带缓存），这里只读结果，
 /// 不再重复枚举模块。
 ///
-/// 黑名单最先判定：命中 `domain::games::DENY_LIST` 的进程（如截图工具）
-/// 无论是游戏库命中还是启发式命中都直接排除。
+/// 判定顺序（先排除、后识别）：
+///   1. 受保护白名单：系统组件（内核/系统管理工具/外壳/安全组件/系统目录里的程序）
+///      永远不判为游戏 —— 否则任务管理器最大化、设置全屏之类都会被当成"游戏"，
+///      进而触发优化动作；
+///   2. 识别黑名单 `domain::games::DENY_LIST`（截图工具等）；
+///   3. 游戏库命中；
+///   4. 启发式（全屏 + 图形运行时）。
 fn classify(lib: &GameLibrary, fg: &foreground::Foreground) -> Option<(String, Confidence)> {
+    if protect::check(fg.pid, &fg.exe, &fg.path).is_some() {
+        return None;
+    }
     if games::is_denied(&fg.exe) {
         return None;
     }
@@ -68,6 +77,26 @@ pub fn run(shared: Arc<Mutex<Shared>>, cfg: Arc<Mutex<Config>>, tx: Sender<UiNot
             };
             s.polls += 1;
             s.foreground = fg.clone();
+            // 受保护判定放在状态机之前：命中即"这条前台窗口不参与识别"，
+            // 同时把原因留给 UI 展示（用户能看到"为什么没识别成游戏"）。
+            let guard = fg
+                .as_ref()
+                .and_then(|f| protect::check(f.pid, &f.exe, &f.path));
+            let prev_guard = s.protected;
+            s.protected = guard;
+            if guard.is_some() && guard != prev_guard {
+                if let Some(f) = &fg {
+                    s.push_log(
+                        Level::Info,
+                        format!(
+                            "前台窗口 {} 属于受保护系统组件（{}），已跳过识别与优化",
+                            f.exe,
+                            guard.unwrap_or_default()
+                        ),
+                        log_cap,
+                    );
+                }
+            }
             let state = s.detect.clone();
 
             match state {

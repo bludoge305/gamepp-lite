@@ -80,7 +80,12 @@ pub fn priority_name(class: u32) -> &'static str {
 /// 这就是逆向里 `GetGameProcessType` 的启发式部分（本工程只保留"看模块"这一层）。
 pub fn graphics_runtimes(pid: u32) -> Vec<String> {
     let mut hits = Vec::new();
-    let h = match open(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ) {
+    // `K32EnumProcessModules` 要的是 PROCESS_QUERY_INFORMATION + PROCESS_VM_READ；
+    // 非提权时对高权限进程只能拿到 LIMITED，先按标准权限试，失败再退一档，
+    // 否则"启发式识别"在未提权运行时恒为空（永远认不出未登记的游戏）。
+    let h = match open(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)
+        .or_else(|| open(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ))
+    {
         Some(h) => h,
         None => return hits,
     };

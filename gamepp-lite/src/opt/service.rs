@@ -66,8 +66,11 @@ pub fn stop_service(name: &str) -> StopOutcome {
     }
 }
 
-/// 还原：只拉起"我们停过"且当前处于 STOPPED 的服务。
-pub fn start_service_if_stopped(name: &str) -> bool {
+/// 还原：确保「我们停过」的服务重新运行。
+///
+/// 返回 `true` 表示服务当前处于运行状态 —— 本次拉起成功，或它本来就在跑
+/// （例如用户在游戏期间手动启动了）。只有"该跑却没能跑起来"才算失败。
+pub fn ensure_running(name: &str) -> bool {
     unsafe {
         let scm = ffi::OpenSCManagerW(
             std::ptr::null(),
@@ -94,8 +97,19 @@ pub fn start_service_if_stopped(name: &str) -> bool {
             &mut needed,
         );
 
-        let started = ok != 0
-            && status.dwCurrentState == ffi::SERVICE_STOPPED
+        if ok == 0 {
+            ffi::CloseServiceHandle(svc);
+            ffi::CloseServiceHandle(scm);
+            return false;
+        }
+
+        // 已在运行：不算失败（可能是用户自己拉起来的）。
+        if status.dwCurrentState == ffi::SERVICE_RUNNING {
+            ffi::CloseServiceHandle(svc);
+            ffi::CloseServiceHandle(scm);
+            return true;
+        }
+        let started = status.dwCurrentState == ffi::SERVICE_STOPPED
             && ffi::StartServiceW(svc, 0, std::ptr::null()) != 0;
 
         ffi::CloseServiceHandle(svc);

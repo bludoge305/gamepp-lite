@@ -16,6 +16,15 @@ mod process;
 mod service;
 mod state;
 
+/// 受保护白名单（系统组件 / 系统目录 / 核心服务）。
+///
+/// 与 GUI 版 `gamepp-lite/src/domain/protect.rs` **共用同一份源文件**（`#[path]` 引入），
+/// 避免两份名单各改各的、逐渐漂移 —— 名单一旦不一致，安全边界就形同虚设。
+/// 该文件只用标准库，无 crate 内部依赖，所以可以这样复用。
+#[path = "../../gamepp-lite/src/domain/protect.rs"]
+#[allow(dead_code)] // CLI 只用到其中一部分判定函数；同一份源文件在 GUI 里用得更多。
+mod protect;
+
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
@@ -177,7 +186,7 @@ fn main() -> ExitCode {
 
 fn run(args: &Args) -> ExitCode {
     let ini = args.ini.clone().unwrap_or_else(config::default_ini_path);
-    let cfg = config::Config::load(&ini);
+    let mut cfg = config::Config::load(&ini);
     println!("配置文件: {}", ini);
     println!("权限: {}", if elevate::is_elevated() { "管理员" } else { "普通用户（部分操作会失败）" });
 
@@ -214,8 +223,14 @@ fn run(args: &Args) -> ExitCode {
                 println!("另一个优化流程正在运行（等待 1 秒超时），本次不做任何操作。");
                 return ExitCode::SUCCESS; // 原版同样返回 true
             }
+            // 显式 --pow 优先：用户给了文件就按"要切电源"处理，不再被 INI 里的
+            // SystemAIPower=0 静默吞掉（旧实现会忽略 --pow，且不给任何提示）。
+            if args.pow_path.is_some() && !cfg.ai_power {
+                cfg.ai_power = true;
+                println!("提示：已指定 --pow，本次按「切换电源方案」处理（覆盖 INI 的 SystemAIPower=0）");
+            }
             // 未指定 --pow 时交给 power::resolve_pow 自动定位游戏加加的 PowerData
-            let pow = if cfg.ai_power { args.pow_path.clone() } else { None };
+            let pow = args.pow_path.clone();
             let opts = optimize::BeginOptions {
                 game_id: args.game_id,
                 game_pid: args.pid,

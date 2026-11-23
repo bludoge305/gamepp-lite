@@ -8,6 +8,7 @@
 //!   sub_10013f70  命中项 `OpenProcess(PROCESS_TERMINATE)` + `TerminateProcess(0)`。
 
 use super::ffi;
+use crate::domain::protect;
 
 /// 游戏/启动器进程名特征表（371 条）。
 ///
@@ -122,8 +123,23 @@ pub fn terminate(pid: u32) -> bool {
     }
 }
 
-/// 进程完整映像路径（终止前先取，供还原时重新启动）。
-fn exe_path_of(pid: u32) -> Option<String> {
+/// 用已有句柄取完整映像路径（供"已经开了句柄"的调用点复用，避免二次 OpenProcess）。
+pub fn exe_path_of_handle(h: ffi::HANDLE) -> Option<String> {
+    if h.is_null() {
+        return None;
+    }
+    let mut buf = [0u16; 1024];
+    let mut size = buf.len() as u32;
+    let ok = unsafe { ffi::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size) };
+    if ok == 0 {
+        None
+    } else {
+        Some(ffi::from_wide(&buf[..size as usize]))
+    }
+}
+
+/// 进程完整映像路径（终止前先取，供还原时重新启动；也用于预演统计）。
+pub fn exe_path(pid: u32) -> Option<String> {
     if pid == 0 {
         return None;
     }
@@ -132,16 +148,34 @@ fn exe_path_of(pid: u32) -> Option<String> {
         if h.is_null() {
             return None;
         }
-        let mut buf = [0u16; 1024];
-        let mut size = buf.len() as u32;
-        let ok = ffi::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
+        let path = exe_path_of_handle(h);
         ffi::CloseHandle(h);
-        if ok == 0 {
-            None
-        } else {
-            Some(ffi::from_wide(&buf[..size as usize]))
-        }
+        path
     }
+}
+
+/// 一次批量终止的结果。
+///
+/// `skipped` 记录被受保护白名单挡下的进程（名字 + 原因），调用方会把它写进日志——
+/// 「跳过了什么、为什么跳过」必须对用户可见，否则用户会以为动作真的生效了。
+pub struct KillOutcome {
+    /// (进程名, pid, 完整路径)；路径取不到时为空串。
+    pub killed: Vec<(String, u32, String)>,
+    /// (进程名, 受保护原因)。
+    pub skipped: Vec<(String, &'static str)>,
+}
+
+/// 受保护判定（PID 守卫 + 映像名 + 完整路径），供优化流程各动作统一调用。
+///
+/// 路径要通过 `OpenProcess` 取一次；取不到（系统/受保护进程常见）时退化为
+/// 按名字判定，而系统核心进程的名字都在白名单里，所以不会漏。
+pub fn protected_reason(pid: u32, name: &str) -> Option<&'static str> {
+    let self_pid = unsafe { ffi::GetCurrentProcessId() };
+    if pid == self_pid {
+        return Some("本程序自身");
+    }
+    let path = exe_path(pid).unwrap_or_default();
+    protect::check(pid, name, &path)
 }
 
 /// 按特征表终止进程，返回 (进程名, pid, 完整路径)。
@@ -149,21 +183,30 @@ fn exe_path_of(pid: u32) -> Option<String> {
 /// 「关闭 Wallpaper Engine」用这一版：终止前先把 exe 路径记下来，
 /// 还原时才能重新启动（记录 pid 没有意义，届时多半已被系统复用）。
 /// 取不到路径的进程照杀但不记录 —— 与原版行为一致。
+///
+/// 白名单内的进程**不终止、也不记录**，只在 `skipped` 里留一条原因。
 pub fn kill_matching_recording(
     patterns: &[String],
     only_current_session: bool,
-) -> Vec<(String, u32, String)> {
-    let mut killed = Vec::new();
+) -> KillOutcome {
+    let mut out = KillOutcome {
+        killed: Vec::new(),
+        skipped: Vec::new(),
+    };
     for p in list_processes(only_current_session) {
         if match_any(&p.name, patterns).is_none() {
             continue;
         }
-        let path = exe_path_of(p.pid);
+        if let Some(reason) = protected_reason(p.pid, &p.name) {
+            out.skipped.push((p.name, reason));
+            continue;
+        }
+        let path = exe_path(p.pid);
         if terminate(p.pid) {
-            killed.push((p.name, p.pid, path.unwrap_or_default()));
+            out.killed.push((p.name, p.pid, path.unwrap_or_default()));
         }
     }
-    killed
+    out
 }
 
 /// 某个映像名（如 `wallpaper64.exe`）当前是否在运行。
@@ -191,13 +234,64 @@ pub fn launch_detached(path: &str) -> bool {
     }
 }
 
-/// 按特征表终止进程，返回 (进程名, pid)。
-pub fn kill_matching(patterns: &[String], only_current_session: bool) -> Vec<(String, u32)> {
-    let mut killed = Vec::new();
+/// 按特征表终止进程。
+///
+/// 与 `kill_matching_recording` 同一套白名单过滤，只是调用方不需要路径
+/// （后台黑名单杀完即止，还原不重建它们）。
+pub fn kill_matching(patterns: &[String], only_current_session: bool) -> KillOutcome {
+    let mut out = KillOutcome {
+        killed: Vec::new(),
+        skipped: Vec::new(),
+    };
     for p in list_processes(only_current_session) {
-        if match_any(&p.name, patterns).is_some() && terminate(p.pid) {
-            killed.push((p.name, p.pid));
+        if match_any(&p.name, patterns).is_none() {
+            continue;
+        }
+        if let Some(reason) = protected_reason(p.pid, &p.name) {
+            out.skipped.push((p.name, reason));
+            continue;
+        }
+        if terminate(p.pid) {
+            out.killed.push((p.name, p.pid, String::new()));
         }
     }
-    killed
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PID 0/4 不经过任何名字/路径判断，直接受保护。
+    #[test]
+    fn kernel_pids_are_guarded() {
+        assert_eq!(protected_reason(4, "System"), Some("内核进程（PID 0/4）"));
+        assert_eq!(protected_reason(0, "whatever.exe"), Some("内核进程（PID 0/4）"));
+    }
+
+    /// 在本机真实进程表上验证：外壳/服务宿主一定被挡下（名字或路径命中）。
+    /// 这两类进程正是原版"名字命中即提优先级 / 全进程释放内存"最容易误伤的。
+    #[test]
+    fn live_system_components_are_guarded() {
+        let procs = list_processes(false);
+        for want in ["explorer.exe", "svchost.exe", "dwm.exe"] {
+            if let Some(p) = procs.iter().find(|p| p.name.eq_ignore_ascii_case(want)) {
+                assert!(
+                    protected_reason(p.pid, &p.name).is_some(),
+                    "{want} 应命中受保护白名单"
+                );
+            }
+        }
+    }
+
+    /// 反例：普通游戏进程名不应被当成受保护组件（白名单不能误伤目标）。
+    #[test]
+    fn game_names_are_not_guarded() {
+        for name in ["cs2.exe", "DeadCells.exe", "GenshinImpact.exe", "wallpaper64.exe"] {
+            assert!(
+                protected_reason(0xFFFF_FF00, name).is_none(),
+                "{name} 不应受保护"
+            );
+        }
+    }
 }

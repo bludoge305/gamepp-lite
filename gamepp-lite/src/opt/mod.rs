@@ -22,21 +22,31 @@ pub use state::State;
 pub struct OptReport {
     pub lines: Vec<String>,
     pub state: State,
+    /// 动作是否完整成功（目前只有「还原」会出现 false：部分服务/电源方案没恢复）。
+    pub ok: bool,
 }
 
 /// 按当前清单执行一次优化（`dry_run` 只产出计划文本）。
 pub fn run_plan(plan: &OptPlan, game_pid: u32, dry_run: bool) -> OptReport {
     let mut lines = Vec::new();
     let st = run(plan, game_pid, dry_run, &mut lines);
-    OptReport { lines, state: st }
+    OptReport {
+        lines,
+        state: st,
+        ok: true,
+    }
 }
 
 /// 按状态文件里的记录还原。
-pub fn restore_plan(plan: &OptPlan, dry_run: bool) -> OptReport {
+pub fn restore_plan(dry_run: bool) -> OptReport {
     let mut st = State::load();
     let mut lines = Vec::new();
-    restore(plan, &mut st, dry_run, &mut lines);
-    OptReport { lines, state: st }
+    let ok = restore(&mut st, dry_run, &mut lines);
+    OptReport {
+        lines,
+        state: st,
+        ok,
+    }
 }
 
 pub fn is_elevated() -> bool {

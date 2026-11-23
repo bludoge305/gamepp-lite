@@ -14,6 +14,11 @@ analysis/main_strings.txt
 analysis/strings.txt
 analysis/va_strings.txt
 
+# 开发期自截图（GPP_SHOT 产出，几十 MB 的 BMP，不入库）
+*.bmp
+# 设计稿的位图预览（源文件 .html 入库，PNG 由它渲染得到）
+final_page_*.png
+
 # 系统杂项
 Thumbs.db
 Desktop.ini

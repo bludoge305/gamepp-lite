@@ -104,7 +104,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             ui.add(
                 egui::Label::new(
-                    RichText::new("未提权时这里会改为红色 Destructive 徽章，并出现「以管理员身份重启」按钮")
+                    RichText::new("预演只读、不改系统；执行会真实修改，需要管理员权限。")
                         .size(11.0)
                         .color(ui::muted(ui)),
                 )
@@ -175,7 +175,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     );
                     ui.add_space(2.0);
                     let p = &mut app.settings.opt;
-                    changed |= ui::check_row(ui, &mut p.game_priority, "调整游戏进程优先级（ABOVE_NORMAL）");
+                    changed |= ui::check_row(ui, &mut p.game_priority, "调整游戏进程优先级（勾选=高于正常，不勾=正常）");
                     changed |= ui::check_row(ui, &mut p.kill_background, "关闭影响流畅性的后台进程（48 条黑名单）");
                     changed |= ui::check_row(ui, &mut p.power_high_perf, "电源方案改为高性能");
                     changed |= ui::check_row(ui, &mut p.free_memory, "释放电脑内存（EmptyWorkingSet）");
@@ -229,6 +229,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     ui::hint(
                         ui,
                         "自动执行同样要求管理员权限；未提权时只会在日志里记一条「已跳过」，不会静默失败。",
+                    );
+                    ui.add_space(2.0);
+                    ui::hint(
+                        ui,
+                        "动作前先过滤受保护白名单（系统组件 / 系统目录 / 核心服务），命中即跳过。",
                     );
                     ui.add_space(4.0);
                     ui.label(

@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)] // Win32 类型名按官方写法保留（HANDLE / DWORD..）
 //! 平台 FFI 层：只声明本项目用到的 Win32 子集。
 //!
 //! 为什么手写而不是引第三方 crate：本工程要求"工程精简"，且逆向结果显示
@@ -57,6 +58,7 @@ pub const MB_ICONINFORMATION: u32 = 0x0040;
 pub const MB_TOPMOST: u32 = 0x00040000;
 
 // ---- 进程 ----
+pub const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
 pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const PROCESS_TERMINATE: u32 = 0x0001;
 pub const PROCESS_VM_READ: u32 = 0x0010;

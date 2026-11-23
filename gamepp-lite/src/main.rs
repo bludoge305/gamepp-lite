@@ -20,11 +20,16 @@ use win::single;
 const APP_NAME: &str = "GamePP-Lite";
 /// 单实例互斥体键。开发期可用 `GPP_INSTANCE_SUFFIX` 追加后缀，让测试实例
 /// 与正在运行的正式实例并存（否则新实例只会唤醒旧的然后自己退出）。
+///
+/// 只在 debug 构建生效：release 里放开它等于允许双实例，两个 watcher 会并发写
+/// `opt-state.ini`、开两个托盘、自动优化/还原互相踩，是正确性问题而非调试便利。
 fn instance_key() -> String {
-    format!(
-        "GamePP-Lite-Core{}",
+    let suffix = if cfg!(debug_assertions) {
         std::env::var("GPP_INSTANCE_SUFFIX").unwrap_or_default()
-    )
+    } else {
+        String::new()
+    };
+    format!("GamePP-Lite-Core{suffix}")
 }
 
 /// 追加一行运行日志（闪退时用户只需把这个文件发来）。

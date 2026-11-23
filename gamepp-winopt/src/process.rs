@@ -10,6 +10,7 @@
 //! 不是文件名全等 —— 例如 "wallpaper" 能命中 wallpaper32.exe / wallpaper64.exe。
 
 use crate::ffi;
+use crate::protect;
 
 /// 内置的游戏/启动器进程名特征表。
 ///
@@ -18,12 +19,12 @@ use crate::ffi;
 /// 下面的清单即该段字面量的地址序转储（371 条，缺 1 条见报告 U1）。
 /// 其中 3 条与别的条目重复（Squirrel/squirrel、BugReport/bugreport、VALORANT ×2），
 /// 原表如此，不影响子串匹配的结果。
-pub const GAME_PATTERNS: &str = include_str!("../data/game_patterns.txt");
+pub const GAME_PATTERNS: &str = include_str!("../../gamepp-lite/opt-data/game_patterns.txt");
 
 /// 后台进程黑名单（SystemKillBackPro）。
 ///
 /// 证据：.data 0x10056af8 起 48 条 std::wstring，由 sub_100010a0 初始化。
-pub const KILL_LIST: &str = include_str!("../data/kill_list.txt");
+pub const KILL_LIST: &str = include_str!("../../gamepp-lite/opt-data/kill_list.txt");
 
 /// 当前会话里的一个进程。
 #[derive(Debug, Clone)]
@@ -140,12 +141,61 @@ pub fn terminate(pid: u32) -> bool {
     }
 }
 
+/// 进程完整映像路径（受保护判定要用它做目录白名单匹配）。
+fn exe_path(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let h = ffi::OpenProcess(ffi::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let ok = ffi::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
+        ffi::CloseHandle(h);
+        if ok == 0 {
+            None
+        } else {
+            Some(ffi::from_wide(&buf[..size as usize]))
+        }
+    }
+}
+
+/// 受保护判定：PID 守卫 + 映像名 + 完整安装路径。
+///
+/// 这是本工程**刻意**加的安全边界（原版没有）：特征表里有很多通用短子串，
+/// 无差别匹配会命中 svchost / explorer 这类系统进程；释放内存与优先级复位
+/// 更是全进程遍历，天然会扫到系统组件。
+pub fn protected_reason(pid: u32, name: &str) -> Option<&'static str> {
+    if pid == unsafe { ffi::GetCurrentProcessId() } {
+        return Some("本程序自身");
+    }
+    if pid <= 4 {
+        return Some("内核进程（PID 0/4）");
+    }
+    if let Some(g) = protect::name_group(name) {
+        return Some(g.label);
+    }
+    protect::path_reason(&exe_path(pid).unwrap_or_default())
+}
+
 /// 按特征表终止进程，返回 (进程名, pid) 列表。调用方负责先决定是否刷新列表。
+///
+/// 白名单内的进程不终止，只打印一行"已跳过"——沉默了会让人以为杀成功。
 pub fn kill_matching(patterns: &[String], only_current_session: bool) -> Vec<(String, u32)> {
     let procs = list_processes(only_current_session);
     let mut killed = Vec::new();
     for p in procs {
-        if match_any(&p.name, patterns).is_some() && terminate(p.pid) {
+        if match_any(&p.name, patterns).is_none() {
+            continue;
+        }
+        if let Some(reason) = protected_reason(p.pid, &p.name) {
+            println!("  - 跳过受保护组件: {} ({}) — {}", p.name, p.pid, reason);
+            continue;
+        }
+        if terminate(p.pid) {
             killed.push((p.name, p.pid));
         }
     }

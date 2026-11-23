@@ -46,7 +46,8 @@ gamepp-lite/
     │   └── tray.rs             托盘消息窗口 + 图标 + 菜单 + 气泡
     ├── domain/                 领域模型
     │   ├── settings.rs         配置（JSON，含 OptPlan）
-    │   └── games.rs            游戏库（exe → 名称/标签，可编辑）
+    │   ├── games.rs            游戏库（exe → 名称/标签，可编辑）
+    │   └── protect.rs          受保护白名单（系统组件 / 系统目录 / 核心服务，见 §5.1）
     ├── opt/                    Windows 优化（自 gamepp-winopt 合并）
     │   ├── ffi.rs              优化模块专用 Win32 声明
     │   ├── plan.rs             OptPlan：可勾选清单 + 服务映射
@@ -75,6 +76,7 @@ gamepp-lite/
 | `win::process` | `processhelper`、`K32EnumProcessModules` | 取路径/存活/优先级/图形运行时 |
 | `services::watcher` | `game listener`、`CGameWatcher` | Idle → Candidate → InGame，带防抖 |
 | `domain::games` | `GamePP_BaseInfo.processpath` + `common\Icon\<exe>.png` | exe 为键；支持编辑/删除/恢复默认 |
+| `domain::protect` | **无对应物**（本工程新增的安全边界） | 系统组件白名单；扫描/优化/清理统一入口，见 §5.1 |
 | `opt::plan` | `GamePPOpt.ini [SYS]` 22 个开关 | 收敛为 13 个有动作的项 + 2 个自动化开关 |
 | `opt::exec` | `GamePPOptimize.node!sub_10013f70` / `sub_100177f0` | 保留原版动作**顺序**与判据 |
 | `opt::service` | `sub_100141e0` / `sub_10016d40` | 8 个服务；SysMain 恒不停（照抄原版） |
@@ -144,6 +146,41 @@ gamepp-lite/
 
 `InGame` 对 alt-tab 粘性（时长按进程生命周期算），退出只认进程消失。
 
+### 5.1 受保护白名单（`domain::protect`）
+
+原版没有任何"不要碰系统"的概念：特征表命中就杀/改优先级，释放内存与还原优先级
+更是全进程遍历。本工程加了一层白名单，**四个动作入口共用同一个判定函数**：
+
+```
+扫描（识别）  watcher::classify      → protect::check(pid, exe, path)
+终止进程      opt::process::kill_*   → process::protected_reason(pid, name)
+改/复位优先级 opt::exec              → process::protected_reason(pid, name)
+释放工作集    opt::exec              → name_group / path_reason（已有句柄时复用）
+停服务        opt::exec              → protect::service_protected(name)
+```
+
+判定顺序（任一命中即受保护，直接跳过）：
+
+| # | 规则 | 内容 |
+|---|---|---|
+| 1 | PID 守卫 | PID 0 / 4（Idle / System）永远受保护 |
+| 2 | 映像名白名单 | 107 条（归一后 106 个唯一名），分 7 组：内核与会话、系统管理工具（任务管理器、MMC 各管理器、注册表、msconfig、资源/性能监视器…）、外壳与输入、安全与防护、安装与更新、虚拟化与容器、本程序 |
+| 3 | 目录白名单 | 约 20 条（以设置页计数为准），可执行文件位于 `%SystemRoot%`、`%ProgramFiles%\WindowsApps`、Windows Defender、IE、Windows 附件、Microsoft Shared 等（含 `\windows\system32\` 等固定片段兜底） |
+| 4 | 服务白名单 | 46 个核心服务：RpcSs / DcomLaunch / Winmgmt / EventLog / Power / BFE / MpsSvc / WinDefend / TermService … |
+
+匹配口径：映像名与服务**大小写不敏感精确匹配**（去掉 `.exe` 再比，不做子串）；
+目录走**路径前缀**匹配并要求分隔符边界（`C:\Windows10Games` 不会命中 `C:\Windows`）。
+
+设计约束：
+
+- **名单只维护一份**：CLI（`gamepp-winopt`）用 `#[path]` 引入同一个文件，避免两份漂移；
+- **不静默**：跳过时会聚合成一行日志（`svchost.exe×52、explorer.exe…`），用户能看到
+  "为什么这个进程没被处理"；预演（dry-run）也会只读扫描一遍，提前报出将要跳过的数量；
+- **不能挡住产品功能**：`OptPlan` 里可停的 7 个服务（`wuauserv` / `WSearch` /
+  `XblAuthManager` / `DiagTrack` / `Diagsvc` / `HomeGroup*`）刻意不在服务白名单内，
+  单元测试锁死这一点（`services_whitelist_keeps_opt_plan_services_usable`）；
+- **不误伤游戏**：`game_names_are_not_guarded` 用真实进程表与典型游戏名做反例。
+
 ---
 
 ## 6. 主要流程
@@ -172,7 +209,7 @@ UI 按钮 → App::start_opt(dry_run, restore)
         → 起 gpp-winopt 线程 → opt::run_plan(&plan, game_pid, dry_run)
             ① 清 DNS  ② 关 Wallpaper Engine  ③ 停后台进程  ④ 释放内存
             ⑤ 停服务 ⑥ 电源方案              ⑦ lodctr /R   ⑧ 清剪贴板
-            ⑨ 优先级（跳过系统关键进程与自身）
+            ⑨ 优先级（过受保护白名单，命中即跳过）
         → 逐行日志回传 UI；非预演时 State::save()（还原则 State::clear()）
           「关闭 Wallpaper Engine」终止前记录 exe 路径，还原时逐个重启
           （文件已删除 / 同名进程已在运行则跳过）
@@ -309,3 +346,4 @@ gamepp-lite\build.cmd      :: 只构建主程序
 | 游戏库为演示数据 | 原库在加密包/服务端 | 支持手工登记与编辑 |
 | 会话不落 SQLite | 保持精简 | 历史仅存内存 |
 | 托盘菜单为原生 `HMENU` | 免第二个渲染进程 | 不能放富内容 |
+| 白名单是静态名单 + 路径前缀，不做数字签名校验 | 校验微软签名要 `WinVerifyTrust` + 证书链，且离线/精简系统上不可靠 | 未收录的系统组件可能漏判；但目录规则（`%SystemRoot%`）在提权场景下能兜住绝大多数 |

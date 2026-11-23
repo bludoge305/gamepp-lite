@@ -6,9 +6,11 @@
 //! - 「恢复默认设置」「退出程序」点击后弹确认 Dialog（D），防误触。
 
 use crate::app::App;
+use crate::domain::protect;
 use crate::domain::settings;
 use crate::ui;
 use eframe::egui;
+use eframe::egui::RichText;
 use shadcn_egui::components::button::{Button, ButtonVariant};
 use shadcn_egui::components::dialog::{self, Dialog};
 
@@ -87,6 +89,69 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     ui.add_space(10.0);
 
+    // ---------------- 受保护白名单（只读） ----------------
+    ui::card(ui, "受保护白名单", |ui| {
+        let (names, services, paths) = protect::counts();
+        ui::hint(
+            ui,
+            "扫描、优化与清理全部先过这张表：命中的进程/服务直接跳过，不改优先级、不结束、不裁剪工作集、不停止。",
+        );
+        ui.add_space(4.0);
+        ui::kv(
+            ui,
+            "覆盖范围",
+            &format!("系统组件 {names} 条 · 受保护服务 {services} 个 · 目录规则 {paths} 条"),
+        );
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("protect_list")
+            .max_height(170.0)
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+            .show(ui, |ui| {
+                for g in protect::PROCESS_GROUPS {
+                    ui.label(
+                        RichText::new(format!("{} · {}", g.label, g.items.len()))
+                            .size(11.0)
+                            .color(ui::role_of(ui, shadcn_egui::style::Role::CardForeground)),
+                    );
+                    ui.label(
+                        RichText::new(g.items.join("、"))
+                            .size(10.0)
+                            .color(ui::muted(ui)),
+                    );
+                    ui.add_space(4.0);
+                }
+                ui.label(
+                    RichText::new("受保护服务")
+                        .size(11.0)
+                        .color(ui::role_of(ui, shadcn_egui::style::Role::CardForeground)),
+                );
+                for g in protect::SERVICE_GROUPS {
+                    ui.label(
+                        RichText::new(format!("{}：{}", g.label, g.items.join("、")))
+                            .size(10.0)
+                            .color(ui::muted(ui)),
+                    );
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("目录规则（路径前缀）")
+                        .size(11.0)
+                        .color(ui::role_of(ui, shadcn_egui::style::Role::CardForeground)),
+                );
+                for (root, label) in protect::path_roots() {
+                    ui.label(
+                        RichText::new(format!("{label}：{root}"))
+                            .size(10.0)
+                            .color(ui::muted(ui)),
+                    );
+                }
+            });
+    });
+
+    ui.add_space(10.0);
+
     // ---------------- 托盘与常驻 ----------------
     ui::card(ui, "托盘与常驻", |ui| {
         let mut close_tray = app.settings.close_to_tray;
@@ -153,6 +218,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             });
         if do_reset {
             app.settings = settings::Settings::default();
+            // 开机自启的真实状态在注册表里，恢复默认设置不会（也不该）去改它；
+            // 把内存中的字段对齐到注册表，否则下次保存会落一份与实际不符的配置。
+            app.settings.autostart = app.autostart_on;
             changed = true;
             app.toast("已恢复默认设置");
         }

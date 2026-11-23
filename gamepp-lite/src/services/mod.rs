@@ -105,6 +105,8 @@ pub struct Config {
 #[derive(Default)]
 pub struct Shared {
     pub foreground: Option<Foreground>,
+    /// 当前前台窗口命中受保护白名单时，记下原因（识别页展示「已跳过」）。
+    pub protected: Option<&'static str>,
     pub detect: DetectState,
     pub session: Option<Session>,
     pub history: VecDeque<SessionSummary>,

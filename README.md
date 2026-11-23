@@ -29,7 +29,7 @@ Rust 复刻：带图形界面的 `GamePP-Lite`、零依赖命令行版 `gamepp-w
 
 ```
 build-installer.cmd                              :: 先构建
-dist\gamepp-lite-setup-0.2.1.exe                 :: 交互式安装
+dist\gamepp-lite-setup-0.2.7.exe                 :: 交互式安装
 dist\gamepp-lite-setup-0.2.1.exe /S /D=D:\Tools\GamePP-Lite
 ```
 
@@ -66,13 +66,20 @@ gamepp-winopt.exe stop
 ## 注意事项
 
 `start` 会真实结束进程、停系统服务、清空剪贴板、抽走工作集；`stop` 的还原是**不完整**的
-（被杀的进程、DNS、剪贴板不可恢复），并且会把当前会话所有进程的优先级复位为 NORMAL。
-建议先跑 `--dry-run`（图形版是「预演」按钮）。
+（被杀的进程、DNS、剪贴板不可恢复），并且会把当前会话所有进程的优先级复位为 NORMAL
+（受保护白名单内的系统组件除外）。建议先跑 `--dry-run`（图形版是「预演」按钮）。
 
-图形版有两处**刻意偏离原版**：一是给进程提优先级前跳过 12 个系统关键进程
-（svchost / explorer / lsass / dwm …），因为原版的无差别子串匹配实测会命中它们；
-二是「关闭 Wallpaper Engine」在终止前记录 exe 路径，**还原时会重新启动它们**
-（原版杀掉就不管了）。
+两个程序共有两处**刻意偏离原版**：
+
+1. **受保护白名单**（`gamepp-lite/src/domain/protect.rs`，命令行版用 `#[path]` 共用同一份）：
+   PID 0/4、107 条系统组件映像名（按 `.exe` 归一后 106 个唯一名；内核与会话、任务管理器/MMC/注册表等系统管理工具、
+   外壳与输入、安全与防护、安装与更新、虚拟化、本程序自身）、系统目录前缀
+   （`%SystemRoot%`、`%ProgramFiles%\WindowsApps`、Windows Defender…）、46 个核心服务。
+   扫描（识别）、终止进程、改/复位优先级、释放工作集、停服务全部先过它，命中即跳过，
+   并在日志里写出"跳过了多少个、因为什么"。
+   原版的无差别子串匹配实测会命中 svchost / explorer / Defender，而「释放内存」与
+   「优先级复位」本身就是全进程遍历，不设边界会直接动到系统组件。
+2. **Wallpaper Engine 可还原**：终止前记录 exe 路径，还原时重新启动（原版杀掉就不管了）。
 
 ## 版权与声明
 
@@ -88,10 +95,12 @@ gamepp-winopt.exe stop
 
 - 逆向报告：`report/gamepp-four-features-reverse-report.md`
 - 架构设计：`gamepp-lite/docs/architecture.md`
-- 一键构建（主程序 + 安装包）：`build-installer.cmd` → `dist\gamepp-lite-setup-0.2.1.exe`
+- 一键构建（主程序 + 安装包）：`build-installer.cmd` → `dist\gamepp-lite-setup-0.2.7.exe`
 - 只构建主程序：`gamepp-lite\build.cmd`
 
 ## 两个程序的关系
 
-`gamepp-winopt/` 是独立的零依赖命令行版，`gamepp-lite/` 是图形版（优化逻辑是它的
-`src/opt/` 子集），两者互不依赖、各自可单独构建。安装器只打包图形版。
+`gamepp-winopt/` 是零依赖命令行版，`gamepp-lite/` 是图形版（优化逻辑是它的
+`src/opt/` 子集）。两者各自可单独构建，但**共用同一份**受保护白名单与数据表
+（命令行版用 `#[path]` / `include_str!` 直接引用图形版的 `protect.rs` 与
+`opt-data/*.txt`），避免两份副本各改各的。安装器只打包图形版。

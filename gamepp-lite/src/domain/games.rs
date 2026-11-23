@@ -151,15 +151,24 @@ impl GameLibrary {
     }
 
     pub fn load() -> Self {
-        std::fs::read_to_string(Self::path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(Self::builtin)
+        let path = Self::path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Self::builtin();
+        };
+        match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                // 同 config：损坏的库先留档，再回落内置列表，别让它被静默覆盖。
+                let _ = std::fs::rename(&path, path.with_extension("json.corrupt"));
+                crate::log_line("gamelib", &format!("gamelib.json 解析失败，已另存为 .corrupt：{e}"));
+                Self::builtin()
+            }
+        }
     }
 
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(Self::path(), text);
+            let _ = super::settings::write_atomic(&Self::path(), &text);
         }
     }
 }

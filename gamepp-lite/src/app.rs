@@ -49,12 +49,47 @@ pub struct EditDraft {
     pub name: String,
 }
 
+/// 开发期自检开关：启动时读一次环境变量，避免每帧重复查环境/重新解析。
+struct DevHooks {
+    /// `GPP_SHOT`：截图输出路径；`None` 表示关闭。
+    shot_path: Option<String>,
+    /// `GPP_SHOT_FRAME`：在第几帧截图（默认 6）。
+    shot_at: u32,
+    /// `GPP_PROBE`：最小化后事件循环存活探针。
+    probe: bool,
+    /// `GPP_TRAY_TOGGLE`：托盘"已优化/未优化"状态切换探针。
+    tray_toggle: bool,
+    shot_frame: u32,
+    /// GPP_PROBE 与 GPP_TRAY_TOGGLE 共用同一个计数（与旧行为一致）。
+    probe_frame: u32,
+}
+
+impl DevHooks {
+    fn from_env() -> Self {
+        Self {
+            shot_path: std::env::var("GPP_SHOT").ok().filter(|p| !p.is_empty()),
+            shot_at: std::env::var("GPP_SHOT_FRAME")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(6),
+            probe: std::env::var("GPP_PROBE").is_ok(),
+            tray_toggle: std::env::var("GPP_TRAY_TOGGLE").is_ok(),
+            shot_frame: 0,
+            probe_frame: 0,
+        }
+    }
+}
+
 /// 后台优化线程回传的消息。
 enum OptMsg {
     Done {
         lines: Vec<String>,
         restored: bool,
         dry_run: bool,
+        /// 动作是否完整成功（还原可能部分失败）。
+        ok: bool,
+        /// 操作结束后是否处于"已优化、有待还原内容"的状态。
+        optimized: bool,
     },
 }
 
@@ -78,12 +113,13 @@ pub struct App {
     pub opt_restored: bool,
     pub elevated: bool,
     opt_rx: Option<Receiver<OptMsg>>,
-    /// 仅开发期使用的自截图帧计数（GPP_SHOT 环境变量触发）。
-    shot_frame: u32,
-    /// 仅开发期的探针计数（GPP_PROBE 环境变量触发）。
-    probe_frame: u32,
+    /// 仅开发期使用：截图与探针（环境变量触发，启动时读取一次）。
+    dev: DevHooks,
     /// 真正退出中：此时不再把"关闭窗口"拦成"收进托盘"。
     quitting: bool,
+    /// 游戏已退出、但还原没能启动（上一次优化还在跑 / 未提权）时置位，
+    /// 由 logic() 在条件满足后补一次还原，避免"退出即还原"被静默吞掉。
+    pending_restore: bool,
     /// 「恢复默认设置」确认弹窗（D：危险操作二次确认）。
     pub confirm_reset: bool,
     /// 「退出程序」确认弹窗。
@@ -191,9 +227,9 @@ impl App {
             opt_restored,
             elevated: opt::is_elevated(),
             opt_rx: None,
-            shot_frame: 0,
-            probe_frame: 0,
+            dev: DevHooks::from_env(),
             quitting: false,
+            pending_restore: false,
             confirm_reset: false,
             confirm_quit: false,
             ctx: cc.egui_ctx.clone(),
@@ -256,6 +292,15 @@ impl App {
             self.toast("exe 名不能为空");
             return;
         }
+        // 系统组件不能登记成游戏（同「手工登记」的拦截，编辑路径也要挡）。
+        if let Some(g) = crate::domain::protect::name_group(draft.exe.trim()) {
+            self.toast(format!(
+                "{} 属于受保护系统组件（{}），不能登记为游戏",
+                draft.exe.trim(),
+                g.label
+            ));
+            return;
+        }
         if self.library.update(&draft.orig, &draft.exe, &draft.name) {
             self.editing = None;
             self.dirty = true;
@@ -284,10 +329,10 @@ impl App {
     // ---------------------------------------------------------------- Windows 优化
 
     /// 后台执行一次优化/还原；`dry_run` 只产出计划文本。
-    pub fn start_opt(&mut self, dry_run: bool, restore: bool) {
+    pub fn start_opt(&mut self, dry_run: bool, restore: bool) -> bool {
         if self.opt_running {
             self.toast("上一次优化还在执行中");
-            return;
+            return false;
         }
         if !dry_run && !self.elevated {
             self.services.snapshot_log(
@@ -295,7 +340,7 @@ impl App {
                 "Windows 优化需要管理员权限，本次已跳过（可在 ② 页点「以管理员身份重启」）",
             );
             self.toast("需要管理员权限：请先点「以管理员身份重启」");
-            return;
+            return false;
         }
 
         let plan = self.settings.opt.clone();
@@ -326,14 +371,19 @@ impl App {
             .name("gpp-winopt".into())
             .spawn(move || {
                 let report = if restore {
-                    opt::restore_plan(&plan, dry_run)
+                    opt::restore_plan(dry_run)
                 } else {
                     opt::run_plan(&plan, game_pid, dry_run)
                 };
-                // 只有真正动过系统才落盘/清状态
+                // 只有真正动过系统才落盘/清状态；还原没全成功时保留状态文件，
+                // 让「还原」按钮还能再点一次重试剩下的部分。
                 if !dry_run {
                     if restore {
-                        opt::State::clear();
+                        if report.ok {
+                            opt::State::clear();
+                        } else {
+                            report.state.save();
+                        }
                     } else {
                         report.state.save();
                     }
@@ -342,9 +392,12 @@ impl App {
                     lines: report.lines,
                     restored: restore,
                     dry_run,
+                    ok: report.ok,
+                    optimized: report.state.optimized,
                 });
             })
             .ok();
+        true
     }
 
     /// 以管理员身份重启自身；成功后当前实例退出。
@@ -388,6 +441,8 @@ impl App {
                 lines,
                 restored,
                 dry_run,
+                ok,
+                optimized,
             }) => {
                 self.opt_running = false;
                 for line in &lines {
@@ -395,8 +450,10 @@ impl App {
                 }
                 self.opt_log = lines;
                 if !dry_run {
-                    self.opt_restored = restored;
-                    self.tray.set_optimized(!restored);
+                    // 以"操作后的实际状态"为准，而不是请求值：执行了但没有产生可还原
+                    // 改动（例如一项都没勾）时不应显示「已优化」；还原没全成功时仍算已优化。
+                    self.opt_restored = if restored { ok } else { !optimized };
+                    self.tray.set_optimized(!self.opt_restored);
                     let summary = self
                         .opt_log
                         .last()
@@ -418,6 +475,8 @@ impl App {
                             if restored { "还原" } else { "完成" }
                         ));
                     }
+                    // 自动还原失败时 opt_restored 保持 false，下一次游戏退出仍会重试；
+                    // 状态文件里保留未完成的服务/电源方案，重试只处理剩下的部分。
                     self.toast(summary);
                 } else {
                     self.toast("预演完成（未修改系统）");
@@ -516,7 +575,9 @@ impl App {
                 UiNotice::GameEnded => {
                     self.tray.set_tooltip("");
                     if self.settings.opt.auto_restore_on_exit && !self.opt_restored {
-                        self.start_opt(false, true);
+                        // 不在通知分支里直接跑：可能正有一次预演/优化在跑，或者没提权。
+                        // 置位后由 logic() 在条件满足时补一次。
+                        self.pending_restore = true;
                     }
                 }
             }
@@ -662,40 +723,60 @@ impl App {
             });
     }
 
-    /// 把 ColorImage 写成 BMP、以及最小化存活探针都在这里（开发期手段）。
-    fn dev_hooks(&mut self, ctx: &egui::Context) {
-        if std::env::var("GPP_TRAY_TOGGLE").is_ok() {
-            self.probe_frame += 1;
-            if self.probe_frame == 8 {
-                self.tray.set_optimized(true);
-            }
-            if self.probe_frame == 16 {
-                self.tray.set_optimized(false);
-            }
-        }
-
-        if std::env::var("GPP_PROBE").is_ok() {
-            self.probe_frame += 1;
-            if self.probe_frame == 5 {
-                self.hide_to_tray();
-                crate::log_line("probe", "第 5 帧：已最小化到托盘态");
-            }
-            if self.probe_frame == 40 {
-                crate::log_line("probe", "第 40 帧：最小化后事件循环仍在运行");
-            }
-        }
-
-        let Ok(path) = std::env::var("GPP_SHOT") else {
+    /// 补跑「游戏退出后自动还原」：上一次优化还在跑时先等，没提权则放弃并留下日志。
+    fn try_pending_restore(&mut self) {
+        if !self.pending_restore || self.opt_running {
             return;
-        };
+        }
+        if !self.elevated {
+            // 没有管理员权限时重试也不会成功，清位并明确告诉用户，避免每帧刷日志。
+            self.pending_restore = false;
+            self.services.snapshot_log(
+                Level::Warn,
+                "游戏已退出，但还原需要管理员权限，本次已跳过（可到 ② 页手动还原）",
+            );
+            return;
+        }
+        if self.start_opt(false, true) {
+            self.pending_restore = false;
+        }
+    }
+
+    /// 把 ColorImage 写成 BMP、以及最小化存活探针都在这里（开发期手段）。
+    ///
+    /// 开关在启动时（`DevHooks::from_env`）读一次，避免每帧查环境、重新解析。
+    fn dev_hooks(&mut self, ctx: &egui::Context) {
+        if self.dev.tray_toggle {
+            self.dev.probe_frame += 1;
+            match self.dev.probe_frame {
+                8 => self.tray.set_optimized(true),
+                16 => self.tray.set_optimized(false),
+                _ => {}
+            }
+        }
+
+        if self.dev.probe {
+            self.dev.probe_frame += 1;
+            match self.dev.probe_frame {
+                5 => {
+                    self.hide_to_tray();
+                    crate::log_line("probe", "第 5 帧：已最小化到托盘态");
+                }
+                40 => crate::log_line("probe", "第 40 帧：最小化后事件循环仍在运行"),
+                _ => {}
+            }
+        }
+
+        if self.dev.shot_path.is_none() {
+            return;
+        }
         // GPP_SHOT_FRAME 可指定截图帧（默认 6）：等高回填这类逐帧收敛的
         // 布局要在足够多的帧之后截图才能看出漂移/稳定。
-        let shot_at: u32 = std::env::var("GPP_SHOT_FRAME")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(6);
-        self.shot_frame += 1;
-        if self.shot_frame == shot_at {
+        self.dev.shot_frame += 1;
+        if self.dev.shot_frame == self.dev.shot_at {
+            let Some(path) = self.dev.shot_path.clone() else {
+                return;
+            };
             // egui 0.37：截图改为 ScreenshotCallback（回调直接拿到 ColorImage）。
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
                 egui::ScreenshotCallback::new(move |img| save_bmp(&path, &img)),
@@ -711,6 +792,7 @@ impl eframe::App for App {
         self.handle_tray();
         self.handle_notices();
         self.poll_opt();
+        self.try_pending_restore();
         if self.dirty {
             self.sync_cfg();
         }
@@ -812,7 +894,7 @@ fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

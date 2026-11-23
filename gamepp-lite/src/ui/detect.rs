@@ -12,6 +12,7 @@
 
 use crate::app::App;
 use crate::domain::games::Confidence;
+use crate::domain::protect;
 use crate::services::{fmt_duration, now_epoch, DetectState};
 use crate::ui;
 use eframe::egui;
@@ -28,30 +29,41 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     ui.set_max_width(ui.available_width());
     ui::page_title(ui, "游戏识别", crate::app::Tab::Detect.hint());
 
-    let (state_text, state_hit, fg, library_hit, heuristics, game_name, since) = {
+    let (state_text, state_hit, fg, library_hit, heuristics, game_name, since, protect_hit) = {
         let s = app.services.shared.lock().unwrap_or_else(|e| e.into_inner());
-        let (state_text, state_hit, name, since) = match &s.detect {
-            DetectState::Idle => ("空闲（前台不是游戏）".to_string(), false, None, 0),
-            DetectState::Candidate { exe, ticks, .. } => {
-                (format!("候选中 · {exe} · 命中 {ticks} 次"), false, None, 0)
-            }
-            DetectState::InGame {
-                name,
-                since,
-                confidence,
-                ..
-            } => (
-                format!(
-                    "已识别 · {}",
-                    match confidence {
-                        Confidence::Matched => "游戏库命中",
-                        Confidence::Heuristic => "启发式命中",
-                    }
+        // 受保护白名单优先：命中时前台窗口根本不参与识别，状态文字直接说明原因。
+        // 但只在「空闲」时这么显示：游戏中 alt-tab 到任务管理器会命中白名单，
+        // 若让它盖掉 InGame，界面会把正在进行的游戏会话显示成"未识别"。
+        let protect_hit = if s.detect == DetectState::Idle {
+            s.protected
+        } else {
+            None
+        };
+        let (state_text, state_hit, name, since) = match protect_hit {
+            Some(reason) => (format!("受保护 · {reason}"), false, None, 0),
+            None => match &s.detect {
+                DetectState::Idle => ("空闲（前台不是游戏）".to_string(), false, None, 0),
+                DetectState::Candidate { exe, ticks, .. } => {
+                    (format!("候选中 · {exe} · 命中 {ticks} 次"), false, None, 0)
+                }
+                DetectState::InGame {
+                    name,
+                    since,
+                    confidence,
+                    ..
+                } => (
+                    format!(
+                        "已识别 · {}",
+                        match confidence {
+                            Confidence::Matched => "游戏库命中",
+                            Confidence::Heuristic => "启发式命中",
+                        }
+                    ),
+                    true,
+                    Some(name.clone()),
+                    *since,
                 ),
-                true,
-                Some(name.clone()),
-                *since,
-            ),
+            },
         };
         let fg = s.foreground.clone();
         let hit = fg
@@ -60,7 +72,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             .map(|e| (e.name.clone(), e.tags.join(" / ")));
         // 优先级与图形运行时都是采样时取好的（见 win::foreground），这里只读快照。
         let heur = fg.as_ref().map(|f| f.runtimes.clone()).unwrap_or_default();
-        (state_text, state_hit, fg, hit, heur, name, since)
+        (
+            state_text,
+            state_hit,
+            fg,
+            hit,
+            heur,
+            name,
+            since,
+            protect_hit,
+        )
     };
 
     // 游戏库快照：编辑/删除在遍历结束后统一落地，避免同时借用 app 的两块。
@@ -165,6 +186,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                         heuristics.join("、")
                     };
                     ui::kv(ui, "图形运行时", &runtime_text);
+                    if protect_hit.is_some() {
+                        ui.add_space(2.0);
+                        ui::hint(ui, "系统组件白名单命中：扫描、优化与清理都会跳过它。");
+                    }
                 });
             });
         });
@@ -184,7 +209,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             ui::stretch_body(ui, h, 170.0);
             ui.label(
                 RichText::new(format!(
-                    "共 {} 条 · 命中判据为映像名 · A：命中行整行高亮",
+                    "共 {} 条 · 命中判据为映像名 · 当前前台命中行整行高亮",
                     entries.len()
                 ))
                 .size(11.0)
@@ -307,11 +332,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     // ---------- 落地游戏库操作 ----------
     if let Some((exe, name)) = add_req {
-        add_custom(&mut app.library, &exe, &name);
-        app.new_custom_exe.clear();
-        app.new_custom_name.clear();
-        app.dirty = true;
-        app.toast("已加入游戏库");
+        // 系统组件不允许登记为游戏：登记了也没用（动作前还会被白名单拦），
+        // 但直接拒绝比"加进去却不生效"清楚。
+        if let Some(g) = protect::name_group(&exe) {
+            app.toast(format!("{exe} 属于受保护系统组件（{}），不能加入游戏库", g.label));
+        } else {
+            app.library.add_custom(&exe, &name);
+            app.new_custom_exe.clear();
+            app.new_custom_name.clear();
+            app.dirty = true;
+            app.toast("已加入游戏库");
+        }
     }
     if let Some((exe, name)) = edit_req {
         app.begin_edit(&exe, &name);
@@ -371,8 +402,4 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 }
             });
     });
-}
-
-fn add_custom(lib: &mut crate::domain::games::GameLibrary, exe: &str, name: &str) {
-    lib.add_custom(exe, name);
 }

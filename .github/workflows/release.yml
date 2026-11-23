@@ -39,6 +39,19 @@ jobs:
           $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           cargo build --release --locked --manifest-path gamepp-lite/Cargo.toml
 
+      # 命令行版也一并编一遍：README 承诺它可独立构建，发版前必须证明这句还成立。
+      - name: Build gamepp-winopt (release)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          cargo build --release --locked --manifest-path gamepp-winopt/Cargo.toml
+
+      - name: Test (protect whitelist / process matching)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          cargo test --locked --manifest-path gamepp-lite/Cargo.toml
+
       - name: Install NSIS
         run: choco install nsis -y --no-progress
 

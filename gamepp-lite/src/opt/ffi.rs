@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)] // Win32 类型名按官方写法保留（HANDLE / DWORD..）
 //! Windows 优化模块用到的 Win32 声明。
 //!
 //! 与 `crate::win::ffi` 有少量同名符号（`OpenProcess` 等），但两者刻意分开：
