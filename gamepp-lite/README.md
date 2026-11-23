@@ -102,12 +102,12 @@ dist\gamepp-lite-setup-0.2.7.exe /uninstall          :: 卸载
 | 变量 | 作用 |
 |---|---|
 | `GPP_SIZE=1040x720` | 指定逻辑窗口尺寸，便于在小窗口下检查布局 |
-| `GPP_TAB=1\|2\|3` | 启动时直接停在某一页（1 识别 / 2 优化 / 3 设置） |
+| `GPP_TAB=2` / `GPP_TAB=3` | 启动时停在 Windows 优化页 / 设置页；未设置或其它值时停在游戏识别页 |
 | `GPP_SHOT=<path.bmp>` | 在第 N 帧后把窗口存成 24 位 BMP（`qa/*.png` 就是这么来的） |
 | `GPP_SHOT_FRAME=<n>` | 截图帧号，默认 6；等高布局要等几帧收敛 |
 | `GPP_PROBE=1` | 第 5 帧最小化到托盘、第 40 帧记一条"事件循环仍在跑" |
 | `GPP_TRAY_TOGGLE=1` | 第 8/16 帧切换托盘"已优化/未优化"图标，验证换图标链路 |
-| `GPP_OPT_DRY=1` | 启动即跑一次 Windows 优化**预演**（只读，但会写 runtime.log） |
+| `GPP_OPT_DRY` | 设置即生效（值任意）：启动跑一次优化**预演**（只读，但会写 runtime.log） |
 | `GPP_INSTANCE_SUFFIX=xxx` | 让测试实例与正式实例并存（**仅 debug 构建生效**） |
 
 ## 与设计稿的差异

@@ -104,6 +104,10 @@ gamepp-winopt.exe stop
 - 一键构建（主程序 + 安装包）：`build-installer.cmd` → `dist\gamepp-lite-setup-0.2.7.exe`
 - 只构建主程序：`gamepp-lite\build.cmd`
 
+| ① 游戏识别 | ② Windows 优化 | ③ 设置 |
+|---|---|---|
+| ![识别](gamepp-lite/qa/shot-detect.png) | ![优化](gamepp-lite/qa/shot-winopt.png) | ![设置](gamepp-lite/qa/shot-settings.png) |
+
 ## 两个程序的关系
 
 `gamepp-winopt/` 是零依赖命令行版，`gamepp-lite/` 是图形版（优化逻辑是它的
