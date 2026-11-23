@@ -56,7 +56,7 @@ gamepp-winopt.exe stop --dry-run                  # 只打印还原计划（含�
 | `sub_10013BD0` | `config::Config::load` |
 | `sub_10013F70` | `optimize::begin` |
 | `sub_10014440` / `sub_10016D40` | `service::services` / `stop_service` / `start_service_if_stopped` |
-| `sub_10016B20` | `process::match_any` + `data/kill_list.txt` |
+| `sub_10016B20` | `process::match_any` + `gamepp-lite/opt-data/kill_list.txt`（跨 crate 共用） |
 | `sub_10016720` | `process::list_processes` |
 | `sub_10016580` / `sub_100174A0` / `sub_10017AA0` | `optimize::apply_priority` |
 | `sub_100177F0` | `optimize::restore` |

@@ -344,16 +344,16 @@ impl App {
         }
 
         let plan = self.settings.opt.clone();
-        let game_pid = self
+        let (game_pid, game_id) = self
             .services
             .shared
             .lock()
             .ok()
             .and_then(|s| match &s.detect {
-                DetectState::InGame { pid, .. } => Some(*pid),
+                DetectState::InGame { pid, game_id, .. } => Some((*pid, *game_id)),
                 _ => None,
             })
-            .unwrap_or(0);
+            .unwrap_or((0, None));
 
         let (tx, rx) = std::sync::mpsc::channel::<OptMsg>();
         self.opt_rx = Some(rx);
@@ -373,7 +373,7 @@ impl App {
                 let report = if restore {
                     opt::restore_plan(dry_run)
                 } else {
-                    opt::run_plan(&plan, game_pid, dry_run)
+                    opt::run_plan(&plan, game_pid, game_id, dry_run)
                 };
                 // 只有真正动过系统才落盘/清状态；还原没全成功时保留状态文件，
                 // 让「还原」按钮还能再点一次重试剩下的部分。
@@ -564,6 +564,8 @@ impl App {
             match n {
                 UiNotice::GameStarted { pid, exe } => {
                     self.tray.set_tooltip(&format!("游戏中：{exe}"));
+                    // 新一局已经开始，上一局遗留的"待还原"不应在新局里执行。
+                    self.pending_restore = false;
                     if self.settings.opt.auto_on_game_start {
                         self.services.snapshot_log(
                             Level::Action,
@@ -735,6 +737,17 @@ impl App {
                 Level::Warn,
                 "游戏已退出，但还原需要管理员权限，本次已跳过（可到 ② 页手动还原）",
             );
+            return;
+        }
+        // 只在确实不处于游戏会话时还原：否则会把刚开的一局优化掉。
+        let in_game = self
+            .services
+            .shared
+            .lock()
+            .map(|s| matches!(s.detect, DetectState::InGame { .. }))
+            .unwrap_or(false);
+        if in_game {
+            self.pending_restore = false;
             return;
         }
         if self.start_opt(false, true) {

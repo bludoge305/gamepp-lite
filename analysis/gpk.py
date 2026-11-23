@@ -1,5 +1,6 @@
 import json,sys,os
-p=r'C:/Users/Bludoge/AppData/Local/GamePP/Apps/8fb708e5972662062da26a2bb4753a23/5.6.99.701/webapp.gpk'
+import os
+p=os.path.join(os.environ.get("GAMEPP_DIR", os.path.expandvars(r"%LOCALAPPDATA%\GamePP\Apps\8fb708e5972662062da26a2bb4753a23\5.6.99.701")), r"webapp.gpk")
 raw=open(p,'rb').read()
 txt=raw[16:].decode('utf-8','replace')
 dec=json.JSONDecoder()

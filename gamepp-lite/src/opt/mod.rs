@@ -27,9 +27,9 @@ pub struct OptReport {
 }
 
 /// 按当前清单执行一次优化（`dry_run` 只产出计划文本）。
-pub fn run_plan(plan: &OptPlan, game_pid: u32, dry_run: bool) -> OptReport {
+pub fn run_plan(plan: &OptPlan, game_pid: u32, game_id: Option<u32>, dry_run: bool) -> OptReport {
     let mut lines = Vec::new();
-    let st = run(plan, game_pid, dry_run, &mut lines);
+    let st = run(plan, game_pid, game_id, dry_run, &mut lines);
     OptReport {
         lines,
         state: st,

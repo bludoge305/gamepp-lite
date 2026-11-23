@@ -45,6 +45,13 @@ pub struct GameEntry {
     pub tags: Vec<String>,
     /// 是否由用户手工登记。
     pub custom: bool,
+    /// 游戏加加的标题 id（`beginGameOptimization(gameId)` 的那个整数）。
+    ///
+    /// 原版由 Electron 主进程的游戏库传入，本工程没有那份库，只能内置已知的几条；
+    /// 它决定「特殊标题」规则（命中进程降 BELOW_NORMAL 而不是 ABOVE_NORMAL）。
+    /// 旧版 gamelib.json 没有这个字段，`serde(default)` 兜住。
+    #[serde(default)]
+    pub title_id: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -55,32 +62,37 @@ pub struct GameLibrary {
 impl GameLibrary {
     /// 内置示例库：exe 名取自本机 `common\Icon\*.png` 与常见引擎默认名。
     pub fn builtin() -> Self {
-        let rows: &[(&str, &str, &[&str])] = &[
-            ("Client-Win64-Shipping.exe", "Unreal 项目（通用 Shipping）", &["虚幻"]),
-            ("HTGame.exe", "环塔（HTGame）", &["网游"]),
-            ("deadcells.exe", "死亡细胞", &["单机"]),
-            ("Endfield.exe", "明日方舟：终末地", &["二次元"]),
-            ("GenshinImpact.exe", "原神", &["二次元"]),
-            ("YuanShen.exe", "原神（国服）", &["二次元"]),
-            ("StarRail.exe", "崩坏：星穹铁道", &["二次元"]),
-            ("VALORANT-Win64-Shipping.exe", "无畏契约", &["竞技"]),
-            ("r5apex.exe", "Apex 英雄", &["竞技"]),
-            ("cs2.exe", "反恐精英 2", &["竞技"]),
-            ("dota2.exe", "Dota 2", &["竞技"]),
-            ("eldenring.exe", "艾尔登法环", &["单机"]),
-            ("Cyberpunk2077.exe", "赛博朋克 2077", &["单机"]),
-            ("GTA5.exe", "侠盗猎车手 V", &["单机"]),
-            ("BaldursGate3.exe", "博德之门 3", &["单机"]),
-            ("NarakaBladepoint.exe", "永劫无间", &["竞技"]),
+        // (exe, 显示名, 标签, 标题 id)：标题 id 只内置逆向报告确认过的两个 PUBG 条目，
+        // 其余留 None（原版的完整标题库在 Electron 主进程里，本工程没有）。
+        let rows: &[(&str, &str, &[&str], Option<u32>)] = &[
+            ("TslGame.exe", "绝地求生（PUBG）", &["竞技"], Some(0x1F5)),
+            ("TslGame_BE.exe", "绝地求生（PUBG · 反作弊）", &["竞技"], Some(0x1F4)),
+            ("Client-Win64-Shipping.exe", "Unreal 项目（通用 Shipping）", &["虚幻"], None),
+            ("HTGame.exe", "环塔（HTGame）", &["网游"], None),
+            ("deadcells.exe", "死亡细胞", &["单机"], None),
+            ("Endfield.exe", "明日方舟：终末地", &["二次元"], None),
+            ("GenshinImpact.exe", "原神", &["二次元"], None),
+            ("YuanShen.exe", "原神（国服）", &["二次元"], None),
+            ("StarRail.exe", "崩坏：星穹铁道", &["二次元"], None),
+            ("VALORANT-Win64-Shipping.exe", "无畏契约", &["竞技"], None),
+            ("r5apex.exe", "Apex 英雄", &["竞技"], None),
+            ("cs2.exe", "反恐精英 2", &["竞技"], None),
+            ("dota2.exe", "Dota 2", &["竞技"], None),
+            ("eldenring.exe", "艾尔登法环", &["单机"], None),
+            ("Cyberpunk2077.exe", "赛博朋克 2077", &["单机"], None),
+            ("GTA5.exe", "侠盗猎车手 V", &["单机"], None),
+            ("BaldursGate3.exe", "博德之门 3", &["单机"], None),
+            ("NarakaBladepoint.exe", "永劫无间", &["竞技"], None),
         ];
         Self {
             entries: rows
                 .iter()
-                .map(|(exe, name, tags)| GameEntry {
+                .map(|(exe, name, tags, title_id)| GameEntry {
                     exe: (*exe).to_string(),
                     name: (*name).to_string(),
                     tags: tags.iter().map(|t| (*t).to_string()).collect(),
                     custom: false,
+                    title_id: *title_id,
                 })
                 .collect(),
         }
@@ -101,6 +113,7 @@ impl GameLibrary {
             name: name.to_string(),
             tags: vec!["手工登记".into()],
             custom: true,
+            title_id: None,
         });
     }
 

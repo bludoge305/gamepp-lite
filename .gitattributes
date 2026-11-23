@@ -3,8 +3,11 @@
 
 # Windows 批处理必须保持 CRLF（LF 会让 cmd 的 goto/label 解析出问题）
 *.cmd text eol=crlf
+# NSIS 脚本按 Windows 换行维护（文件本身另需 UTF-8 BOM，见脚本头注释）
+*.nsi text eol=crlf
 
 # 二进制资源不做任何转换
 *.png binary
 *.ico binary
 *.exe binary
+*.bmp binary

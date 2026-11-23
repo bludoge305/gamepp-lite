@@ -75,8 +75,24 @@ fn note_skipped(log: &mut Vec<String>, scope: &str, skipped: &[(String, &'static
     );
 }
 
+/// 还原未完全成功时的收尾行。界面直接引用它做着色判定，改文案不会漏改颜色。
+pub const MSG_RESTORE_PARTIAL: &str =
+    "还原未完全成功：仍显示「已优化」，可再点一次「还原」重试剩余项";
+
+/// 原版 `sub_10016580` 里的 4 个「特殊标题」id（`beginGameOptimization(gameId)` 的整数）：
+/// 命中它们的游戏不升优先级，反而降为 BELOW_NORMAL。
+///
+/// 注意这是**标题 id**，不是进程 PID —— 判定依据来自游戏库的 `title_id` 字段。
+pub const SPECIAL_GAME_IDS: [u32; 4] = [0x1F5, 0x1FC, 0x1FD, 0x20B];
+
 /// 执行一次优化，返回新的运行状态（调用方负责落盘）。
-pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) -> State {
+pub fn run(
+    plan: &OptPlan,
+    game_pid: u32,
+    game_id: Option<u32>,
+    dry_run: bool,
+    log: &mut Vec<String>,
+) -> State {
     let mut st = State {
         optimized: !dry_run,
         game_pid,
@@ -306,7 +322,7 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
     // 未勾选时整段跳过。原版是"命中特征表就写优先级"（勾选=ABOVE_NORMAL，不勾=NORMAL），
     // 用户视角却是"我没勾它却被改了优先级"，所以这里刻意偏离，并在 README 里写明。
     let priority_changed = if plan.game_priority {
-        apply_priority(plan, dry_run, log)
+        apply_priority(plan, game_id, dry_run, log)
     } else {
         note(log, "· 未勾选「调整游戏进程优先级」，本步跳过");
         0
@@ -349,20 +365,26 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
 /// - 当前已是 HIGH/REALTIME 的不动；
 /// - `SystemGameProPriority=1` → ABOVE_NORMAL，否则 NORMAL。
 ///
-/// 原版还有一条"特殊标题 id 降为 BELOW_NORMAL"的分支，判定依据是 gameId（标题 id），
-/// 图形版拿不到标题 id，只有一个 PID —— 拿 PID 去比标题 id 会随机命中 508 之类的真实进程，
-/// 所以这里不实现该分支（命令行版的 `--game-id` 路径仍然保留）。
+/// 「特殊标题」按标题 id（gameId）判定：game_id 来自游戏库里的 `title_id`，
+/// 命中 `SPECIAL_GAME_IDS` 时把进程降为 BELOW_NORMAL 而不是提优先级。
+/// 库里没有这一条（或启发式识别）时 game_id 为 None，按普通游戏处理。
 ///
 /// **本工程刻意加的安全边界**：命中特征表还要再过 `domain::protect` 白名单。
 /// 原版把"名字命中即提优先级"无差别套用到当前会话，而特征表里有很短的通用子串，
 /// 实测会命中 `svchost.exe` / `explorer.exe` 一类系统进程 —— 给它们提优先级没有收益，
 /// 反而可能拖慢整机，所以白名单内的一律跳过并计数。
-fn apply_priority(plan: &OptPlan, dry_run: bool, log: &mut Vec<String>) -> usize {
+fn apply_priority(
+    plan: &OptPlan,
+    game_id: Option<u32>,
+    dry_run: bool,
+    log: &mut Vec<String>,
+) -> usize {
     let procs = process::list_processes(true);
     let mut skipped: Vec<(String, &'static str)> = Vec::new();
     let helper_running = procs.iter().any(|p| {
         process::contains_ci(&p.name, SELF_HELPER_A) || process::contains_ci(&p.name, SELF_HELPER_B)
     });
+    let special = game_id.is_some_and(|id| SPECIAL_GAME_IDS.contains(&id));
     let patterns = process::game_patterns();
     let target = if plan.game_priority {
         ffi::ABOVE_NORMAL_PRIORITY_CLASS
@@ -387,17 +409,25 @@ fn apply_priority(plan: &OptPlan, dry_run: bool, log: &mut Vec<String>) -> usize
                 continue;
             }
             let cur = ffi::GetPriorityClass(h);
-            if cur != ffi::HIGH_PRIORITY_CLASS
-                && cur != ffi::REALTIME_PRIORITY_CLASS
-                && !helper_running
-            {
-                if !dry_run && ffi::SetPriorityClass(h, target) != 0 {
-                    changed += 1;
+            if cur != ffi::HIGH_PRIORITY_CLASS && cur != ffi::REALTIME_PRIORITY_CLASS {
+                if special {
+                    // 原版对这几个标题反过来降优先级（实测是为了躲开它们的调度抢占）。
+                    if !dry_run && ffi::SetPriorityClass(h, ffi::BELOW_NORMAL_PRIORITY_CLASS) != 0 {
+                        changed += 1;
+                    }
+                    note(
+                        log,
+                        format!("· 特殊标题，降为 BELOW_NORMAL：{}（{}）", p.name, p.pid),
+                    );
+                } else if !helper_running {
+                    if !dry_run && ffi::SetPriorityClass(h, target) != 0 {
+                        changed += 1;
+                    }
+                    note(
+                        log,
+                        format!("· 提优先级 {:#x}：{}（{}）", target, p.name, p.pid),
+                    );
                 }
-                note(
-                    log,
-                    format!("· 提优先级 {:#x}：{}（{}）", target, p.name, p.pid),
-                );
             }
             ffi::CloseHandle(h);
             touched += 1;
@@ -453,7 +483,7 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
     }
 
     // 重新启动被「关闭 Wallpaper Engine」结束的进程（原版不做这一步，本工程补上）。
-    let mut still_wallpaper = restore_wallpaper(st, dry_run, log);
+    let still_wallpaper = restore_wallpaper(st, dry_run, log);
 
     if dry_run {
         note(log, "· 将把当前会话所有进程优先级复位 NORMAL");
@@ -509,11 +539,10 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
     } else {
         // 保留未完成的部分，供下次重试；optimized 仍为 true，界面会继续显示「已优化」。
         st.stopped_services = still_stopped;
-        still_wallpaper.shrink_to_fit();
         st.killed_wallpaper = still_wallpaper;
         note(
             log,
-            "还原未完全成功：仍显示「已优化」，可再点一次「还原」重试剩余项",
+            MSG_RESTORE_PARTIAL,
         );
         false
     }

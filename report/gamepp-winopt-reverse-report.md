@@ -455,9 +455,6 @@ for (p in session_procs) {                       // 当前会话的每一个进�
 ```
 gamepp-winopt/
 ├── Cargo.toml
-├── data/
-│   ├── game_patterns.txt   # 从 .rdata 0x1004E490..0x10050AD8 精确转储的 371 条进程特征
-│   └── kill_list.txt       # 48 条后台进程黑名单
 └── src/
     ├── main.rs      # CLI：start / stop / status，互斥体 gamePP_opti
     ├── ffi.rs       # 手写 Win32 FFI（无第三方 crate）
@@ -469,6 +466,10 @@ gamepp-winopt/
     └── state.rs     # 跨进程状态（替代原版的进程内结构体）
 ```
 
+数据表不在这里另存一份：`game_patterns.txt`（371 条进程特征）与 `kill_list.txt`（48 条
+后台黑名单）放在 `gamepp-lite/opt-data/`，命令行版用 `include_str!` 与 `#[path]` 直接引用，
+避免两份副本各改各的。
+
 原模块函数 ↔ Rust 函数对应表：
 
 | 原实现 | Rust |
@@ -477,7 +478,7 @@ gamepp-winopt/
 | `sub_10013F70`（Windows 优化主流程） | `optimize::begin` |
 | `sub_10014440`（服务名→配置字节） | `service::services` |
 | `sub_10016D40`（停/起服务） | `service::stop_service` / `start_service_if_stopped` |
-| `sub_10016B20`（48 条黑名单匹配） | `process::match_any` + `data/kill_list.txt` |
+| `sub_10016B20`（48 条黑名单匹配） | `process::match_any` + `gamepp-lite/opt-data/kill_list.txt` |
 | `sub_10016720`（进程表 + 会话过滤） | `process::list_processes` |
 | `sub_10016580`/`sub_100174A0`/`sub_10017AA0`（优先级） | `optimize::apply_priority` |
 | `sub_100177F0`（还原优先级/亲和性） | `optimize::restore` |

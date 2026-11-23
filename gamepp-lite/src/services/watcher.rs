@@ -27,7 +27,10 @@ use std::time::Duration;
 ///   2. 识别黑名单 `domain::games::DENY_LIST`（截图工具等）；
 ///   3. 游戏库命中；
 ///   4. 启发式（全屏 + 图形运行时）。
-fn classify(lib: &GameLibrary, fg: &foreground::Foreground) -> Option<(String, Confidence)> {
+fn classify(
+    lib: &GameLibrary,
+    fg: &foreground::Foreground,
+) -> Option<(String, Confidence, Option<u32>)> {
     if protect::check(fg.pid, &fg.exe, &fg.path).is_some() {
         return None;
     }
@@ -35,12 +38,17 @@ fn classify(lib: &GameLibrary, fg: &foreground::Foreground) -> Option<(String, C
         return None;
     }
     if let Some(entry) = lib.lookup(&fg.exe) {
-        return Some((entry.name.clone(), Confidence::Matched));
+        return Some((entry.name.clone(), Confidence::Matched, entry.title_id));
     }
     // 启发式：全屏 + 加载了图形运行时。对应 GetGameProcessType 的兜底分支。
     if fg.fullscreen && !fg.runtimes.is_empty() {
-        let stem = fg.exe.split('.').next().unwrap_or(&fg.exe).to_string();
-        return Some((format!("{stem}（启发式识别）"), Confidence::Heuristic));
+        let stem = fg
+            .exe
+            .rsplit_once('.')
+            .map(|(s, _)| s)
+            .unwrap_or(&fg.exe)
+            .to_string();
+        return Some((format!("{stem}（启发式识别）"), Confidence::Heuristic, None));
     }
     None
 }
@@ -71,10 +79,9 @@ pub fn run(shared: Arc<Mutex<Shared>>, cfg: Arc<Mutex<Config>>, tx: Sender<UiNot
         let mut exited = false;
 
         {
-            let mut s = match shared.lock() {
-                Ok(s) => s,
-                Err(_) => return,
-            };
+            // 锁中毒（某个持锁线程 panic）不应该让识别线程永久退出：
+            // 取回内部数据继续跑，比"UI 显示运行中、实际早已停摆"要好。
+            let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
             s.polls += 1;
             s.foreground = fg.clone();
             // 受保护判定放在状态机之前：命中即"这条前台窗口不参与识别"，
@@ -119,7 +126,7 @@ pub fn run(shared: Arc<Mutex<Shared>>, cfg: Arc<Mutex<Config>>, tx: Sender<UiNot
                         None
                     };
                     match (same, hit) {
-                        (true, Some((name, conf))) if ticks + 1 >= stable => {
+                        (true, Some((name, conf, game_id))) if ticks + 1 >= stable => {
                             let started = now_epoch();
                             s.detect = DetectState::InGame {
                                 pid,
@@ -127,6 +134,7 @@ pub fn run(shared: Arc<Mutex<Shared>>, cfg: Arc<Mutex<Config>>, tx: Sender<UiNot
                                 name: name.clone(),
                                 confidence: conf.clone(),
                                 since: started,
+                                game_id,
                             };
                             s.session = Some(Session::new(exe.clone(), name.clone(), started));
                             if conf == Confidence::Heuristic {

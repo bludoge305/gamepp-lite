@@ -22,8 +22,8 @@ SOFTWARE.
 
 ---
 
-Additional notice: this project is an independent clean-room re-implementation
-based on static analysis of the GamePP ("游戏加加") product. It is not
+Additional notice: this project is an independent re-implementation based on
+static analysis of the GamePP ("游戏加加") product. It is not
 affiliated with, endorsed by, or sponsored by the GamePP vendor. All
 trademarks and product names mentioned belong to their respective owners.
 The repository intentionally excludes extracted binaries and bulk string

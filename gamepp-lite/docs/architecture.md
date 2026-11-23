@@ -22,7 +22,7 @@
 
 ```
 gamepp-lite/
-├── Cargo.toml                  eframe 0.31 / serde / serde_json
+├── Cargo.toml                  eframe/egui 0.37 · shadcn-egui 0.8 · serde / serde_json
 ├── build.cmd                   构建脚本（自动前置 binutils，见 §10）
 ├── opt-data/                   优化模块的数据表
 │   ├── game_patterns.txt       371 条游戏/启动器进程特征（原版 .data 转储）
@@ -64,7 +64,8 @@ gamepp-lite/
         └── mod.rs              卡片 / 键值 / 胶囊 / 左对齐文本单元
 ```
 
-约 5,000 行 Rust；`unsafe` 仅出现在 `win/`、`opt/` 两个原生目录内。
+约 6,500 行 Rust（图形版 6,327 + 命令行版 1,859，命令行版复用图形版的 protect.rs 与 opt-data）；
+`unsafe` 仅出现在 `win/`、`opt/` 两个原生目录内。
 
 ---
 
@@ -116,7 +117,8 @@ gamepp-lite/
 要点：
 
 - 锁顺序恒为 `Config → Shared`，且不跨 Win32 调用持锁；
-- 所有 `.lock()` 都做"中毒容错"（`unwrap_or_else(|e| e.into_inner())`）；
+- 线程间共享的状态都用 `.lock()` 的中毒容错（`unwrap_or_else(|e| e.into_inner())`），
+  锁中毒不会让识别/托盘线程悄悄退出；
 - **Windows 优化跑在独立线程**：它会停服务、遍历进程，放在 UI 线程会卡死界面；
 - **UI 不做系统调用**：前台窗口、进程优先级、图形运行时都由 `gpp-watcher` 按识别节拍
   （默认 1 秒）采样一次放进 `Shared`，`ui/` 每帧只读快照。模块枚举按 `(pid, exe)` 缓存，
@@ -273,7 +275,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 1. 输出从 `println!` 改成 `&mut Vec<String>`，由 GUI 展示 + 落 `runtime.log`；
 2. 配置源从"读 GamePP 的 INI"改成"自己的 `OptPlan`"（不再提供 INI 导入）；
 3. 增加一条**安全偏差**：提优先级前跳过系统关键进程
-   （`svchost.exe / explorer.exe / services.exe / lsass.exe / dwm.exe` 等 12 个）与自身进程。
+   （`svchost.exe / explorer.exe / services.exe / lsass.exe / dwm.exe` 等，完整名单见 `domain/protect.rs`）与自身进程。
    原因：原版对"命中特征表"的进程无差别处理，实测会命中 svchost 一类系统进程；
    给它们提优先级没有收益、反而可能拖慢整机。日志里会写明"跳过 N 个系统关键进程"。
 
@@ -284,7 +286,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 ## 9. 安装器（NSIS）
 
 `installer/gamepp-lite.nsi` 是 NSIS 3 脚本，`build-installer.cmd` 在构建主程序后调用
-`makensis` 打包；产物从 15MB 压到约 4MB（lzma 固实压缩）。曾用零依赖 Rust 自研安装器，
+`makensis` 打包；产物从约 34 MB 压到约 7 MB（lzma 固实压缩）。曾用零依赖 Rust 自研安装器，
 已按"主流打包方式"决策替换为 NSIS。
 
 ```cmd

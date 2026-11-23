@@ -55,6 +55,11 @@ VIAddVersionKey /LANG=1033 "OriginalFilename" "gamepp-lite-setup.exe"
 VIAddVersionKey /LANG=2052 "ProductName" "${APP_NAME}"
 VIAddVersionKey /LANG=2052 "FileDescription" "${APP_NAME} 安装程序"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "MIT License"
+; 中文系统按 0804 取这一块：缺了这几项，右键属性里的版本/公司/文件名会显示为空
+VIAddVersionKey /LANG=2052 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=2052 "CompanyName" "${APP_PUBLISHER}"
+VIAddVersionKey /LANG=2052 "OriginalFilename" "gamepp-lite-setup.exe"
 
 !define MUI_ICON "..\gamepp-lite\assets\app.ico"
 !define MUI_UNICON "..\gamepp-lite\assets\app.ico"
@@ -108,10 +113,15 @@ Section "Install" SEC_INSTALL
   File "..\gamepp-lite\README.md"
   File "..\LICENSE"
 
-  SetOutPath "$INSTDIR\docs"
+  ; 文档按仓库里的相对位置铺开：README 里的 ../report/… 与 architecture.md 里的
+  ; ../../report/… 只有这样才点得开（平铺到 $INSTDIR\docs 会全是死链）。
+  SetOutPath "$INSTDIR\docs\gamepp-lite"
+  File "..\gamepp-lite\README.md"
+  SetOutPath "$INSTDIR\docs\gamepp-lite\docs"
+  File "..\gamepp-lite\docs\architecture.md"
+  SetOutPath "$INSTDIR\docs\report"
   File "..\report\gamepp-four-features-reverse-report.md"
   File "..\report\gamepp-winopt-reverse-report.md"
-  File "..\gamepp-lite\docs\architecture.md"
 
   ; 卸载器（放最后，包含前面所有文件的清单）
   WriteUninstaller "$INSTDIR\uninstall.exe"

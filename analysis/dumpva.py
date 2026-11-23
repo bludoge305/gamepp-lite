@@ -1,5 +1,6 @@
 import struct,sys
-path=r"C:/Users/Bludoge/AppData/Local/GamePP/Apps/8fb708e5972662062da26a2bb4753a23/5.6.99.701/win32/common/GamePPOptimize.node"
+import os
+path=os.path.join(os.environ.get("GAMEPP_DIR", os.path.expandvars(r"%LOCALAPPDATA%\GamePP\Apps\8fb708e5972662062da26a2bb4753a23\5.6.99.701")), r"win32\common\GamePPOptimize.node")
 data=open(path,'rb').read()
 e=struct.unpack_from('<I',data,0x3C)[0];coff=e+4
 numsec,=struct.unpack_from('<H',data,coff+2);opt_size,=struct.unpack_from('<H',data,coff+16)

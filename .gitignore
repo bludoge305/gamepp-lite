@@ -8,7 +8,7 @@ dist/
 .workbuddy/
 
 # 逆向过程从目标程序提取的大体积转储（版权物料，不入公开仓库）
-# 保留 analysis/ 下的脚本与两份小型特征表转储（内容与 opt-data/ 一致）
+# 只保留 analysis/ 下的分析脚本；特征表以 gamepp-lite/opt-data/ 为唯一来源
 analysis/main.jsc
 analysis/main_strings.txt
 analysis/strings.txt
@@ -18,6 +18,9 @@ analysis/va_strings.txt
 *.bmp
 # 设计稿的位图预览（源文件 .html 入库，PNG 由它渲染得到）
 final_page_*.png
+
+# Python
+__pycache__/
 
 # 系统杂项
 Thumbs.db

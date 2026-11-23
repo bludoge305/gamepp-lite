@@ -14,13 +14,16 @@ Rust 复刻：带图形界面的 `GamePP-Lite`、零依赖命令行版 `gamepp-w
 │   ├── src/                    win/ 原生层 · services/ 识别与托盘 · opt/ 优化 · ui/ 三页
 │   ├── opt-data/               48 条后台进程黑名单、371 条游戏特征表
 │   ├── docs/architecture.md    设计文档
+│   ├── docs/design/            三页排版定稿（HTML）
 │   └── qa/                     界面截图
 ├── gamepp-winopt/              命令行版（零依赖，只做 Windows 优化）
 ├── installer/                  NSIS 安装脚本（打包 gamepp-lite → dist/setup exe）
-├── analysis/                   逆向过程中用的脚本与转储
+├── analysis/                   逆向分析脚本（特征表以 opt-data/ 为唯一来源）
 ├── .github/workflows/          push tag 自动构建 + 发 GitHub Release
+├── SECURITY.md                 安全边界：这个程序会真实改系统（[必读](SECURITY.md)）
 ├── dist/                       构建产物（安装包，不入库）
-└── build-installer.cmd         一键构建（主程序 → NSIS 安装包 → dist）
+├── build-installer.cmd         一键构建（主程序 → NSIS 安装包 → dist）
+└── LICENSE                     MIT
 ```
 
 ## 快速开始
@@ -30,7 +33,7 @@ Rust 复刻：带图形界面的 `GamePP-Lite`、零依赖命令行版 `gamepp-w
 ```
 build-installer.cmd                              :: 先构建
 dist\gamepp-lite-setup-0.2.7.exe                 :: 交互式安装
-dist\gamepp-lite-setup-0.2.1.exe /S /D=D:\Tools\GamePP-Lite
+dist\gamepp-lite-setup-0.2.7.exe /S /D=D:\Tools\GamePP-Lite
 ```
 
 只用命令行版：
@@ -93,7 +96,8 @@ gamepp-winopt.exe stop
 
 ## GamePP-Lite（图形界面版）
 
-三个入口（游戏识别 / Windows 优化 / 设置），Rust + egui，单文件约 15 MB。
+三个入口（游戏识别 / Windows 优化 / 设置），Rust + egui，单文件约 34 MB（32 MiB），
+安装包约 7 MB。
 
 - 逆向报告：`report/gamepp-four-features-reverse-report.md`
 - 架构设计：`gamepp-lite/docs/architecture.md`

@@ -4,7 +4,7 @@
 `build-installer.cmd` 在构建主程序后调用 `makensis` 生成 `dist\gamepp-lite-setup-<版本>.exe`。
 （曾用零依赖 Rust 自研安装器，2026-11 按"主流打包方式"决策替换为 NSIS。）
 
-产物大小约 7 MB（主程序约 15 MB，lzma 固实压缩后）。
+产物大小约 7 MB（主程序约 34 MB / 32 MiB，lzma 固实压缩后）。
 
 ## 本机构建
 
@@ -35,11 +35,19 @@ build-installer.cmd          :: 构建主程序 + 打包 → dist\
 <安装目录>\
 ├── gamepp-lite.exe          主程序
 ├── uninstall.exe            NSIS 卸载器
-├── README.md                gamepp-lite 的说明
-└── docs\
-    ├── REVERSE-REPORT 相关两份逆向报告
-    └── ARCHITECTURE.md      架构设计文档
+├── README.md                说明（与 docs\gamepp-lite\README.md 同内容，顶层这份方便直接打开）
+├── LICENSE                  MIT 许可证正文
+└── docs\                     按仓库里的相对布局铺开，文档之间的链接才能点开
+    ├── gamepp-lite\
+    │   ├── README.md
+    │   └── docs\
+    │       └── architecture.md
+    └── report\
+        ├── gamepp-four-features-reverse-report.md
+        └── gamepp-winopt-reverse-report.md
 ```
+
+静默安装（`/S`）后共 **8 个文件**：exe、卸载器、顶层 README、LICENSE，以及 `docs\` 下 5 个。
 
 * 注册表（64 位视图）：`HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\GamePP-Lite`
 * 开始菜单（公共）：`%ProgramData%\Microsoft\Windows\Start Menu\Programs\GamePP-Lite\`

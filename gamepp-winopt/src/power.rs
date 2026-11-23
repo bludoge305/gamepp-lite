@@ -137,20 +137,47 @@ pub fn import_pow(path: &str) -> Option<String> {
 }
 
 /// 一步到位：导入 .pow 并激活；成功返回 (上一个方案 GUID, 新方案 GUID)。
+///
+/// 激活后**回读校验**：`PowerSetActiveScheme` 返回成功不等于方案真的换了
+/// （导入拿到的 GUID 不对、方案被组策略锁死等都会"成功但没变"）。这里以
+/// `PowerGetActiveScheme` 的结果为准，不一致就尽力回滚到原方案并返回失败。
 pub fn switch_to_pow(pow_path: &Path) -> Option<(String, String)> {
     let prev = active_scheme()?;
     let new_guid = import_pow(&pow_path.to_string_lossy())?;
     if !set_active(&new_guid) {
         return None;
     }
+    match active_scheme() {
+        Some(cur) if cur == new_guid => {}
+        other => {
+            let cur = other.unwrap_or_else(|| "查询失败".to_string());
+            println!("  - 导入后回读不一致：期望 {new_guid}，实际 {cur}；尝试回滚到 {prev}");
+            if !set_active(&prev) {
+                println!("  - 回滚失败，原方案 GUID = {prev}（可手动 powercfg /setactive {prev}）");
+            }
+            return None;
+        }
+    }
     Some((prev, new_guid))
 }
 
 /// 直接激活一个已知 GUID（方案此前已被导入过时可用，无需 .pow 文件）。
+/// 同样带回读校验（见 `switch_to_pow`）。
 pub fn switch_to_guid(guid: &str) -> Option<(String, String)> {
     let prev = active_scheme()?;
     if !set_active(guid) {
         return None;
+    }
+    match active_scheme() {
+        Some(cur) if cur == guid => {}
+        other => {
+            let cur = other.unwrap_or_else(|| "查询失败".to_string());
+            println!("  - 切换后回读不一致：期望 {guid}，实际 {cur}；尝试回滚到 {prev}");
+            if !set_active(&prev) {
+                println!("  - 回滚失败，原方案 GUID = {prev}（可手动 powercfg /setactive {prev}）");
+            }
+            return None;
+        }
     }
     Some((prev, guid.to_string()))
 }

@@ -295,9 +295,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for line in &app.opt_log {
-                        let color = if line.contains("失败") || line.contains("权限") {
+                        // 失败摘要用共享常量判定（改文案不会漏改颜色），其余失败行按关键词；
+                        // 摘要可能带「· 」前缀，先剥掉再比。
+                        let l = line.trim_start_matches("· ").trim_start();
+                        let color = if l.starts_with(crate::opt::exec::MSG_RESTORE_PARTIAL)
+                            || l.contains("失败")
+                            || l.contains("权限")
+                        {
                             ui::bad(ui)
-                        } else if line.starts_with("完成") || line.starts_with("还原完成") {
+                        } else if l.starts_with("完成") || l.starts_with("还原完成") {
                             ui::good(ui)
                         } else {
                             ui::muted(ui)

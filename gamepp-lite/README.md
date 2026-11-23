@@ -49,7 +49,7 @@ target\release\gamepp-lite.exe
 ```cmd
 build-installer.cmd                                 :: 在仓库根目录执行
 dist\gamepp-lite-setup-0.2.7.exe                    :: 交互式
-dist\gamepp-lite-setup-0.2.1.exe /S /D=D:\Tools\Lite :: 静默
+dist\gamepp-lite-setup-0.2.7.exe /S /D=D:\Tools\Lite :: 静默
 dist\gamepp-lite-setup-0.2.7.exe /uninstall          :: 卸载
 ```
 
@@ -110,8 +110,21 @@ dist\gamepp-lite-setup-0.2.7.exe /uninstall          :: 卸载
 | `GPP_OPT_DRY=1` | 启动即跑一次 Windows 优化**预演**（只读，但会写 runtime.log） |
 | `GPP_INSTANCE_SUFFIX=xxx` | 让测试实例与正式实例并存（**仅 debug 构建生效**） |
 
+## 与设计稿的差异
+
+`docs/design/final_page_*.html` 是排版定稿，其中一部分**功能项**当前版本没有实现，
+界面按"实际能做的事"渲染，不摆空壳：
+
+| 页面 | 设计稿有、当前版本没有 | 说明 |
+|---|---|---|
+| ① 游戏识别 | CPU / GPU 占用、窗口标题列 | 需要 ETW/PDH 采集，没有做 |
+| ② Windows 优化 | 游戏模式、硬件加速 GPU 计划、禁用全屏优化、关闭鼠标加速、Xbox 游戏栏、传递优化、通知与专注助手、视觉特效 | 这些是注册表开关，当前版本实现的是逆向报告里那套动作（优先级/后台进程/服务/电源/内存/剪贴板） |
+| ③ 设置 | 无操作归档、节拍抖动、按天数保留、清空识别记录 | 当前是轮询间隔/稳定轮数/历史条数/日志条数 |
+
+配色与布局按设计稿执行；功能项差异按"不假装能用"处理。
+
 ## 明确没有做的事
 
 注入游戏进程、Present hook、覆盖层绘制、GPU/温度/功耗采集、会话落 SQLite。
-② 页里唯一"偏离原版"的地方是：每个动作前先过受保护白名单（svchost/explorer/lsass… 等系统组件），
+② 页与命令行版都刻意偏离原版的地方是：每个动作前先过受保护白名单（svchost/explorer/lsass… 等系统组件），
 因为实测原版的无差别匹配会命中它们，提优先级有害无益。

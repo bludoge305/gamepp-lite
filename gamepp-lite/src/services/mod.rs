@@ -32,6 +32,9 @@ pub enum DetectState {
         name: String,
         confidence: Confidence,
         since: u64,
+        /// 游戏库里的标题 id（`beginGameOptimization(gameId)` 的那个整数）。
+        /// 决定「特殊标题」优先级规则；库里没有这一条时为 None。
+        game_id: Option<u32>,
     },
 }
 
