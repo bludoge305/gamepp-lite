@@ -33,7 +33,7 @@ if not defined VER (
 )
 
 echo [1/2] building gamepp-lite (release) ...
-"%CARGO%" build --release --manifest-path gamepp-lite\Cargo.toml
+"%CARGO%" build --release --locked --manifest-path gamepp-lite\Cargo.toml
 if errorlevel 1 goto fail
 
 echo [2/2] packing installer with NSIS (v%VER%) ...

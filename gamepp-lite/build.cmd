@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 
 echo [1/1] building gamepp-lite (release) ...
-"%CARGO%" build --release --manifest-path "%~dp0Cargo.toml"
+"%CARGO%" build --release --locked --manifest-path "%~dp0Cargo.toml"
 if errorlevel 1 goto fail
 
 echo.

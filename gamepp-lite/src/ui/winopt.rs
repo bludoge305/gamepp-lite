@@ -30,7 +30,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     ui::page_title(ui, "Windows 优化", crate::app::Tab::WinOpt.hint());
 
     let restored = app.opt_restored;
-    let enabled = !app.opt_running;
+    // 预演只读，忙时禁用即可；执行/还原需要管理员权限，未提权时直接禁用，
+    // 避免"点了按钮只弹一句提示"（提权按钮就在同一张卡里）。
+    let busy = app.opt_running;
+    let can_write = !busy && app.elevated;
     let mut req_dry = false;
     let mut req_exec = false;
     let mut req_restore = false;
@@ -65,7 +68,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             // 按示例顺序排：执行优化（主按钮）最右，其次还原、预演。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(enabled, Button::new("执行优化").size(ButtonSize::Sm))
+                    .add_enabled(can_write, Button::new("执行优化").size(ButtonSize::Sm))
                     .clicked()
                 {
                     req_exec = true;
@@ -73,7 +76,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 // 只有处于「已优化」状态才有东西可还原；`restored` 表示"当前已还原"。
                 if ui
                     .add_enabled(
-                        enabled && !restored,
+                        can_write && !restored,
                         Button::new("还原").variant(ButtonVariant::Outline).size(ButtonSize::Sm),
                     )
                     .on_hover_text("重启自己停过的服务、重启被结束的 Wallpaper Engine、优先级复位、电源方案还原")
@@ -83,7 +86,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 }
                 if ui
                     .add_enabled(
-                        enabled,
+                        !busy,
                         Button::new("预演（不改系统）")
                             .variant(ButtonVariant::Ghost)
                             .size(ButtonSize::Sm),

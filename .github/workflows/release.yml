@@ -69,13 +69,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem dist
 
-      - name: Create GitHub Release
+      - name: Create (or update) GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           $v = $env:TAG -replace '^v', ''
-          gh release create "$env:TAG" "dist/gamepp-lite-setup-$v.exe" `
-            --title "GamePP-Lite $v" `
-            --generate-notes
+          # tag 与 Cargo.toml 必须一致，否则发出去的版本号和程序里显示的会打架
+          $pkg = (Select-String -Path gamepp-lite/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($pkg -ne $v) { Write-Error "tag $v 与 gamepp-lite/Cargo.toml 的 $pkg 不一致"; exit 1 }
+          # 重跑同一个 tag 时不报错：已有 Release 就覆盖产物，没有才创建
+          gh release view "$env:TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:TAG" "dist/gamepp-lite-setup-$v.exe" --clobber
+          } else {
+            gh release create "$env:TAG" "dist/gamepp-lite-setup-$v.exe" `
+              --title "GamePP-Lite $v" `
+              --generate-notes
+          }

@@ -236,11 +236,12 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
     }
 
     // ⑪ 优先级 / 亲和性（原版 sub_10016580 → sub_100174a0）
-    apply_priority(cfg, opts);
+    let priority_changed = apply_priority(cfg, opts);
 
     // 只有确实留下可还原改动才标记为"已优化"：否则 stop 会退化成把全会话
     // 进程优先级压回 NORMAL（会连带改掉用户自己设成 HIGH 的进程）。
-    st.optimized = !opts.dry_run && (!st.stopped_services.is_empty() || st.plan_switched);
+    st.optimized = !opts.dry_run
+        && (!st.stopped_services.is_empty() || st.plan_switched || priority_changed > 0);
     st
 }
 
@@ -253,7 +254,7 @@ pub fn begin(cfg: &Config, opts: &BeginOptions) -> State {
 ///   * 当前优先级是 HIGH/REALTIME 的进程不动；
 ///   * gameId ∈ SPECIAL_GAME_IDS 的标题：改设 BELOW_NORMAL(0x4000)，不设目标优先级；
 ///   * 其余：SystemGameProPriority=1 → ABOVE_NORMAL(0x8000)，=0 → NORMAL(0x20)。
-fn apply_priority(cfg: &Config, opts: &BeginOptions) {
+fn apply_priority(cfg: &Config, opts: &BeginOptions) -> usize {
     let procs = process::list_processes(true);
 
     let helper_running = procs.iter().any(|p| {
@@ -278,6 +279,7 @@ fn apply_priority(cfg: &Config, opts: &BeginOptions) {
         None
     };
 
+    let mut changed = 0usize;
     for p in &procs {
         if process::match_any(&p.name, &patterns).is_none() {
             continue;
@@ -295,13 +297,15 @@ fn apply_priority(cfg: &Config, opts: &BeginOptions) {
             let cur = ffi::GetPriorityClass(h);
             if cur != ffi::HIGH_PRIORITY_CLASS && cur != ffi::REALTIME_PRIORITY_CLASS {
                 if special {
-                    if !opts.dry_run {
-                        ffi::SetPriorityClass(h, ffi::BELOW_NORMAL_PRIORITY_CLASS);
+                    if !opts.dry_run
+                        && ffi::SetPriorityClass(h, ffi::BELOW_NORMAL_PRIORITY_CLASS) != 0
+                    {
+                        changed += 1;
                     }
                     println!("  - 优先级（特殊标题，降为 BELOW_NORMAL）: {} ({})", p.name, p.pid);
                 } else if !helper_running {
-                    if !opts.dry_run {
-                        ffi::SetPriorityClass(h, target);
+                    if !opts.dry_run && ffi::SetPriorityClass(h, target) != 0 {
+                        changed += 1;
                     }
                     println!(
                         "  - 优先级: {} ({}) → 0x{:x}",
@@ -310,13 +314,14 @@ fn apply_priority(cfg: &Config, opts: &BeginOptions) {
                 }
             }
             if let Some(mask) = limit_mask {
-                if !opts.dry_run {
-                    ffi::SetProcessAffinityMask(h, mask);
+                if !opts.dry_run && ffi::SetProcessAffinityMask(h, mask) != 0 {
+                    changed += 1;
                 }
             }
             ffi::CloseHandle(h);
         }
     }
+    changed
 }
 
 /// 对应 sub_100177f0：还原优先级（并恢复全核心亲和性）。

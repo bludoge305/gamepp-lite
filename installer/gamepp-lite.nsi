@@ -1,7 +1,7 @@
 ﻿; GamePP-Lite NSIS 安装脚本
 ;
 ; 构建方式（由 build-installer.cmd 自动调用）：
-;   makensis -DVERSION=0.2.1 "-DOUTFILE=..\dist\gamepp-lite-setup-0.2.1.exe" gamepp-lite.nsi
+;   makensis -DVERSION=<版本> "-DOUTFILE=..\dist\gamepp-lite-setup-<版本>.exe" gamepp-lite.nsi
 ;
 ; 支持的命令行（与 NSIS 约定一致）：
 ;   gamepp-lite-setup.exe                     交互式向导
@@ -101,8 +101,12 @@ Section "Install" SEC_INSTALL
   SectionIn RO
 
   SetOutPath "$INSTDIR"
+  ; 升级安装时先结束正在运行的实例，否则 exe 被占用会写失败
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXE}"'
+  Pop $0
   File "..\gamepp-lite\target\release\${APP_EXE}"
   File "..\gamepp-lite\README.md"
+  File "..\LICENSE"
 
   SetOutPath "$INSTDIR\docs"
   File "..\report\gamepp-four-features-reverse-report.md"
@@ -157,6 +161,10 @@ FunctionEnd
 Section "Uninstall"
   SetShellVarContext all
 
+  ; 卸载时进程还在跑会导致删不掉 exe、留下半个安装（需重启才能清）
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXE}"'
+  Pop $0
+
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\卸载 ${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
@@ -169,6 +177,7 @@ Section "Uninstall"
   ; 只删除我们安装过的文件；目录里有用户自己的文件时 RMDir 会安全失败
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\README.md"
+  Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\uninstall.exe"
   RMDir /r "$INSTDIR\docs"
   RMDir "$INSTDIR"

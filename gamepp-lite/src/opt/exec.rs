@@ -316,8 +316,9 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
     st.optimized = !dry_run && need_restore;
 
     if !dry_run {
-        if plan.enabled_count() == 0 {
-            note(log, "· 没有可执行的动作项，未改动可还原状态");
+        if !need_restore {
+            // 一项都没生效（没勾选，或勾了但全部被白名单挡下）。
+            note(log, "· 本次没有产生可还原的改动");
         } else {
             note(
                 log,
@@ -458,7 +459,7 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
     }
 
     // 重新启动被「关闭 Wallpaper Engine」结束的进程（原版不做这一步，本工程补上）。
-    restore_wallpaper(st, dry_run, log);
+    let mut still_wallpaper = restore_wallpaper(st, dry_run, log);
 
     if dry_run {
         note(log, "· 将把当前会话所有进程优先级复位 NORMAL");
@@ -482,9 +483,10 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
             if h.is_null() {
                 continue;
             }
-            ffi::SetPriorityClass(h, ffi::NORMAL_PRIORITY_CLASS);
+            if ffi::SetPriorityClass(h, ffi::NORMAL_PRIORITY_CLASS) != 0 {
+                touched += 1;
+            }
             ffi::CloseHandle(h);
-            touched += 1;
         }
     }
     note(log, format!("· 已把 {touched} 个进程的优先级复位为 NORMAL"));
@@ -502,7 +504,7 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
         }
     }
 
-    if still_stopped.is_empty() && power_ok {
+    if still_stopped.is_empty() && power_ok && still_wallpaper.is_empty() {
         st.optimized = false;
         st.stopped_services.clear();
         st.killed_wallpaper.clear();
@@ -513,6 +515,8 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
     } else {
         // 保留未完成的部分，供下次重试；optimized 仍为 true，界面会继续显示「已优化」。
         st.stopped_services = still_stopped;
+        still_wallpaper.shrink_to_fit();
+        st.killed_wallpaper = still_wallpaper;
         note(
             log,
             "还原未完全成功：仍显示「已优化」，可再点一次「还原」重试剩余项",

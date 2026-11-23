@@ -774,9 +774,8 @@ impl App {
         // 布局要在足够多的帧之后截图才能看出漂移/稳定。
         self.dev.shot_frame += 1;
         if self.dev.shot_frame == self.dev.shot_at {
-            let Some(path) = self.dev.shot_path.clone() else {
-                return;
-            };
+            // shot_path 上面已判过非 None；回调要求 'static，故 clone 一次。
+            let path = self.dev.shot_path.clone().unwrap_or_default();
             // egui 0.37：截图改为 ScreenshotCallback（回调直接拿到 ColorImage）。
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
                 egui::ScreenshotCallback::new(move |img| save_bmp(&path, &img)),

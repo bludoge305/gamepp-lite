@@ -4,7 +4,7 @@
 `build-installer.cmd` 在构建主程序后调用 `makensis` 生成 `dist\gamepp-lite-setup-<版本>.exe`。
 （曾用零依赖 Rust 自研安装器，2026-11 按"主流打包方式"决策替换为 NSIS。）
 
-产物大小约 4MB（主程序 15MB，lzma 固实压缩后 27%）。
+产物大小约 7 MB（主程序约 15 MB，lzma 固实压缩后）。
 
 ## 本机构建
 

@@ -36,7 +36,7 @@ gamepp-winopt.exe stop --dry-run                  # 只打印还原计划（含�
 | `--game-id N` | 标题 id，对应原版 `beginGameOptimization(gameId)`；`0x1F5/0x1FC/0x1FD/0x20B` 会走"降优先级"分支 |
 | `--pid N` | 游戏进程 pid（仅记录到状态，便于诊断） |
 | `--cores N` | 原版 `setCPUValue` 设定的核心数；`0` = 不做亲和性改动 |
-| `--pow PATH` | 指定电源方案 `.pow`；不指定时自动在程序目录、`%LOCALAPPDATA%\GamePP\Apps\*\<版本>\win32\PowerData`、`%ProgramFiles%\GamePP` 下找 `GPP_Maxed.pow` |
+| `--pow PATH` | 显式指定电源方案 `.pow`；**只要传了就按"切换电源方案"执行**（覆盖 INI 里的 `SystemAIPower`）。不传时仅在 `SystemAIPower=1` 时才自动在程序目录、`%LOCALAPPDATA%\GamePP\Apps\*\<版本>\win32\PowerData`、`%ProgramFiles%\GamePP` 下找 `GPP_Maxed.pow` |
 | `--dry-run` | 只打印，不执行任何系统调用（`start` / `stop` 都支持） |
 | `--no-elevate` | 不自动提权，以当前权限直接执行（诊断用，多数步骤会失败） |
 
