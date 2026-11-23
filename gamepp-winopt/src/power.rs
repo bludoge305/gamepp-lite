@@ -18,11 +18,14 @@ use crate::ffi;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
-// 依据 Power.dll!PP_Initialization 的反编译调用 `PowerImportPowerScheme(0, &guid, &out)`：
-// 三参数 —— RootPowerKey（传 0 表示默认根键）、.pow 路径、输出 GUID。原实现只声明了两个
-// 参数，第三个参数会读到寄存器里的垃圾值，属于"要么崩、要么永不生效"的 ABI 错误。
+// `PowerImportPowerScheme(HKEY RootPowerKey, LPCWSTR ImportFileNamePath,
+// GUID **DestinationSchemeGuid)`：第三个参数是 **GUID 的指针**，语义为「*传入值为 NULL
+// 时由函数自行分配一个 GUID 并把地址写回，调用方用 LocalFree 释放」。
+// （对应 Power.dll!PP_Initialization 的反编译调用 `PowerImportPowerScheme(0, &guid, &out)`。）
+// 注意不能写成 `*mut GUID`：那样 callee 会把 &g 当 GUID** 解引用，把堆指针写进 g，
+// 拿到的是假 GUID —— 不崩溃但永远切不了电源方案，并且泄漏一块内存。
 type PowerImportPowerSchemeFn =
-    unsafe extern "system" fn(*mut c_void, *const u16, *mut ffi::GUID) -> u32;
+    unsafe extern "system" fn(*mut c_void, *const u16, *mut *mut ffi::GUID) -> u32;
 type PowerSetActiveSchemeFn = unsafe extern "system" fn(*mut c_void, *const ffi::GUID) -> u32;
 type PowerGetActiveSchemeFn = unsafe extern "system" fn(*mut c_void, *mut *mut ffi::GUID) -> u32;
 
@@ -118,11 +121,14 @@ pub fn import_pow(path: &str) -> Option<String> {
     unsafe {
         let import = api.import?;
         let w = ffi::wide(path);
-        let mut g = ffi::GUID::zeroed();
-        if import(std::ptr::null_mut(), w.as_ptr(), &mut g) != 0 {
+        // *DestinationSchemeGuid 传 NULL，让函数分配；成功后必须 LocalFree（同 active_scheme）。
+        let mut p: *mut ffi::GUID = std::ptr::null_mut();
+        if import(std::ptr::null_mut(), w.as_ptr(), &mut p) != 0 || p.is_null() {
             return None;
         }
-        // 全零 GUID 说明导入没真正落地（ABI 不匹配时会这样），不能当成成功。
+        let g = *p;
+        ffi::LocalFree(p as ffi::HANDLE);
+        // 真正的健全性检查：全零 GUID 视为导入未落地。
         if g.data1 == 0 && g.data2 == 0 && g.data3 == 0 && g.data4 == [0u8; 8] {
             return None;
         }
