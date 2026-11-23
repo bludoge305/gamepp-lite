@@ -178,7 +178,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     );
                     ui.add_space(2.0);
                     let p = &mut app.settings.opt;
-                    changed |= ui::check_row(ui, &mut p.game_priority, "调整游戏进程优先级（勾选=高于正常，不勾=正常）");
+                    changed |= ui::check_row(ui, &mut p.game_priority, "调整游戏进程优先级（ABOVE_NORMAL）");
                     changed |= ui::check_row(ui, &mut p.kill_background, "关闭影响流畅性的后台进程（48 条黑名单）");
                     changed |= ui::check_row(ui, &mut p.power_high_perf, "电源方案改为高性能");
                     changed |= ui::check_row(ui, &mut p.free_memory, "释放电脑内存（EmptyWorkingSet）");

@@ -22,9 +22,6 @@ use super::service::{self, StopOutcome};
 use super::state::State;
 use crate::domain::protect;
 
-/// 原版 `sub_10016580` 的 4 个特殊标题 id：不升优先级，反而降到 BELOW_NORMAL。
-pub const SPECIAL_GAME_IDS: [u32; 4] = [0x1F5, 0x1FC, 0x1FD, 0x20B];
-
 const SELF_HELPER_A: &str = "cpucores";
 const SELF_HELPER_B: &str = "cpucoresspecs";
 
@@ -305,7 +302,15 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
     }
 
     // ⑨ 优先级
-    let priority_changed = apply_priority(plan, game_pid, dry_run, log);
+    //
+    // 未勾选时整段跳过。原版是"命中特征表就写优先级"（勾选=ABOVE_NORMAL，不勾=NORMAL），
+    // 用户视角却是"我没勾它却被改了优先级"，所以这里刻意偏离，并在 README 里写明。
+    let priority_changed = if plan.game_priority {
+        apply_priority(plan, dry_run, log)
+    } else {
+        note(log, "· 未勾选「调整游戏进程优先级」，本步跳过");
+        0
+    };
 
     // 只有"确实留下了可还原的改动"才算已优化。否则全不勾选也会把状态标成已优化，
     // 游戏退出时触发自动还原 → 还原会把全会话进程优先级压回 NORMAL（有外部副作用）。
@@ -344,17 +349,20 @@ pub fn run(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) 
 /// - 当前已是 HIGH/REALTIME 的不动；
 /// - `SystemGameProPriority=1` → ABOVE_NORMAL，否则 NORMAL。
 ///
+/// 原版还有一条"特殊标题 id 降为 BELOW_NORMAL"的分支，判定依据是 gameId（标题 id），
+/// 图形版拿不到标题 id，只有一个 PID —— 拿 PID 去比标题 id 会随机命中 508 之类的真实进程，
+/// 所以这里不实现该分支（命令行版的 `--game-id` 路径仍然保留）。
+///
 /// **本工程刻意加的安全边界**：命中特征表还要再过 `domain::protect` 白名单。
 /// 原版把"名字命中即提优先级"无差别套用到当前会话，而特征表里有很短的通用子串，
 /// 实测会命中 `svchost.exe` / `explorer.exe` 一类系统进程 —— 给它们提优先级没有收益，
 /// 反而可能拖慢整机，所以白名单内的一律跳过并计数。
-fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<String>) -> usize {
+fn apply_priority(plan: &OptPlan, dry_run: bool, log: &mut Vec<String>) -> usize {
     let procs = process::list_processes(true);
     let mut skipped: Vec<(String, &'static str)> = Vec::new();
     let helper_running = procs.iter().any(|p| {
         process::contains_ci(&p.name, SELF_HELPER_A) || process::contains_ci(&p.name, SELF_HELPER_B)
     });
-    let special = SPECIAL_GAME_IDS.contains(&game_pid);
     let patterns = process::game_patterns();
     let target = if plan.game_priority {
         ffi::ABOVE_NORMAL_PRIORITY_CLASS
@@ -379,31 +387,17 @@ fn apply_priority(plan: &OptPlan, game_pid: u32, dry_run: bool, log: &mut Vec<St
                 continue;
             }
             let cur = ffi::GetPriorityClass(h);
-            if cur != ffi::HIGH_PRIORITY_CLASS && cur != ffi::REALTIME_PRIORITY_CLASS {
-                if special {
-                    if !dry_run && ffi::SetPriorityClass(h, ffi::BELOW_NORMAL_PRIORITY_CLASS) != 0 {
-                        changed += 1;
-                    }
-                    note(log, format!("· 特殊标题，降为 BELOW_NORMAL：{}（{}）", p.name, p.pid));
-                } else if !helper_running {
-                    if !dry_run && ffi::SetPriorityClass(h, target) != 0 {
-                        changed += 1;
-                    }
-                    note(
-                        log,
-                        format!(
-                            "· {} {:#x}：{}（{}）",
-                            if plan.game_priority {
-                                "提优先级"
-                            } else {
-                                "设优先级"
-                            },
-                            target,
-                            p.name,
-                            p.pid
-                        ),
-                    );
+            if cur != ffi::HIGH_PRIORITY_CLASS
+                && cur != ffi::REALTIME_PRIORITY_CLASS
+                && !helper_running
+            {
+                if !dry_run && ffi::SetPriorityClass(h, target) != 0 {
+                    changed += 1;
                 }
+                note(
+                    log,
+                    format!("· 提优先级 {:#x}：{}（{}）", target, p.name, p.pid),
+                );
             }
             ffi::CloseHandle(h);
             touched += 1;
