@@ -32,6 +32,9 @@ pub fn enabled() -> bool {
 }
 
 /// Run 值是否写过（只回答"有没有这一项"，不回答"系统会不会执行"）。
+///
+/// 掩码同时接受 REG_SZ 与 REG_EXPAND_SZ：手工改过、或被别的安装器/工具写过的项
+/// 常见是 EXPAND_SZ（里面放 `%LOCALAPPDATA%\..`），只认 REG_SZ 会把它读成"没开"。
 fn run_value_present() -> bool {
     let sub = to_wide(RUN_KEY);
     let name = to_wide(VALUE_NAME);
@@ -42,7 +45,7 @@ fn run_value_present() -> bool {
             HKEY_CURRENT_USER,
             sub.as_ptr(),
             name.as_ptr(),
-            RRF_RT_REG_SZ,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
             std::ptr::null_mut(),
             buf.as_mut_ptr() as *mut _,
             &mut len,
@@ -112,52 +115,88 @@ fn clear_block() -> bool {
     }
 }
 
-pub fn set(enable: bool) -> bool {
+/// 设置开机自启。
+///
+/// `Ok(())` 表示**写完并回读校验通过**，而不只是"API 没报错"——被安全软件拦下、
+/// 写到只读键、写进去又被改回来的情况，靠返回值是看不出来的。
+/// `Err` 带阶段描述与 Win32 错误码，调用方原样展示，同时由本函数落进 runtime.log。
+pub fn set(enable: bool) -> Result<(), String> {
+    let r = apply(enable);
+    if let Err(e) = &r {
+        crate::log_line(
+            "autostart",
+            &format!(
+                "{}开机自启失败：{e}",
+                if enable { "开启" } else { "关闭" }
+            ),
+        );
+    }
+    r
+}
+
+fn apply(enable: bool) -> Result<(), String> {
+    // 自身路径先取好再开键：取不到就直接早退，不会留下没关闭的注册表句柄。
+    let cmd = if enable {
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .map_err(|e| format!("取自身路径失败：{e}"))?;
+        Some(format!("\"{exe}\" {AUTOSTART_FLAG}"))
+    } else {
+        None
+    };
+
     let sub = to_wide(RUN_KEY);
     let name = to_wide(VALUE_NAME);
     unsafe {
         let mut key: HKEY = std::ptr::null_mut();
         let mut disp = 0u32;
-        let r = RegCreateKeyExW(
+        // 只要写值权限：建键时用 KEY_SET_VALUE 而不是 KEY_WRITE，权限面更小，
+        // 在受控环境（组策略收紧注册表权限）里更不容易被直接拒掉。
+        let rc = RegCreateKeyExW(
             HKEY_CURRENT_USER,
             sub.as_ptr(),
             0,
             std::ptr::null(),
             0,
-            KEY_WRITE,
+            KEY_SET_VALUE,
             std::ptr::null_mut(),
             &mut key,
             &mut disp,
         );
-        if r != 0 {
-            return false;
+        if rc != 0 {
+            return Err(format!("打开 Run 键失败（Win32 错误码 {rc}）"));
         }
-        let ok = if enable {
-            let exe = std::env::current_exe()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
-            let cmd = format!("\"{exe}\" {AUTOSTART_FLAG}");
-            let data = to_wide(&cmd);
-            let bytes = (data.len() * 2) as u32;
-            RegSetValueExW(
-                key,
-                name.as_ptr(),
-                0,
-                REG_SZ,
-                data.as_ptr() as *const u8,
-                bytes,
-            ) == 0
-        } else {
-            let r = RegDeleteValueW(key, name.as_ptr());
-            r == 0 || r == 2 // 2 = ERROR_FILE_NOT_FOUND，视为已关闭
+        let rc = match &cmd {
+            Some(cmd) => {
+                let data = to_wide(cmd);
+                RegSetValueExW(
+                    key,
+                    name.as_ptr(),
+                    0,
+                    REG_SZ,
+                    data.as_ptr() as *const u8,
+                    (data.len() * 2) as u32,
+                )
+            }
+            None => RegDeleteValueW(key, name.as_ptr()),
         };
         RegCloseKey(key);
-        // 写值本身成功不代表会生效：用户在任务管理器里禁用过的话，系统仍不执行。
-        // 此时把标记改回"启用"，等于替用户把这项从"已禁用"里捞回来。
-        if ok && enable && blocked_by_os() {
-            clear_block()
-        } else {
-            ok
+        // 2 = ERROR_FILE_NOT_FOUND：关闭时本来就没有这一项，视同成功。
+        if rc != 0 && !(cmd.is_none() && rc == 2) {
+            let stage = if cmd.is_some() { "写入" } else { "删除" };
+            return Err(format!("{stage} Run 值失败（Win32 错误码 {rc}）"));
         }
     }
+
+    // 写值本身成功不代表会生效：用户在任务管理器里禁用过的话，系统仍不执行。
+    // 此时把标记改回"启用"，等于替用户把这项从"已禁用"里捞回来。
+    if enable && blocked_by_os() && !clear_block() {
+        return Err("清除「启动应用」禁用标记失败".into());
+    }
+
+    // 回读校验：以真实生效状态为准，而不是以刚才那次写入的返回值为准。
+    if enabled() != enable {
+        return Err("写入后回读不一致（可能被安全软件拦截或改回）".into());
+    }
+    Ok(())
 }

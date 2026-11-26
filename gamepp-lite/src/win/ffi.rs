@@ -73,9 +73,12 @@ pub const ERROR_ALREADY_EXISTS: u32 = 183;
 pub const EVENT_MODIFY_STATE: u32 = 0x0002;
 pub const WAIT_OBJECT_0: u32 = 0;
 pub const KEY_WRITE: u32 = 0x20006;
+/// 只要写值权限：建键时用它代替 KEY_WRITE，权限面更小。
+pub const KEY_SET_VALUE: u32 = 0x0002;
 pub const REG_SZ: u32 = 1;
 pub const REG_BINARY: u32 = 3;
 pub const RRF_RT_REG_SZ: u32 = 0x0002;
+pub const RRF_RT_REG_EXPAND_SZ: u32 = 0x0004;
 pub const RRF_RT_REG_BINARY: u32 = 0x0008;
 pub const HKEY_CURRENT_USER: HKEY = 0x80000001u64 as HKEY;
 

@@ -511,14 +511,16 @@ impl App {
     }
 
     pub fn set_autostart(&mut self, on: bool) {
-        let ok = autostart::set(on);
+        let res = autostart::set(on);
+        let ok = res.is_ok();
         self.autostart_on = on && ok;
         self.settings.autostart = self.autostart_on;
         self.tray.set_autostart(self.autostart_on);
-        self.toast(if ok {
-            format!("开机自启已{}", if on { "开启" } else { "关闭" })
-        } else {
-            "写入注册表失败（可能被安全软件拦截）".into()
+        self.toast(match res {
+            Ok(()) => format!("开机自启已{}", if on { "开启" } else { "关闭" }),
+            // 失败原因（阶段 + Win32 错误码）由 win::autostart 给出并已落日志，
+            // 这里原样展示，别再把错误码吃掉只说"可能被安全软件拦截"。
+            Err(e) => format!("开机自启{}失败：{e}", if on { "开启" } else { "关闭" }),
         });
         self.dirty = true;
     }
