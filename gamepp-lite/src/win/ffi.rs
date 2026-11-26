@@ -74,7 +74,9 @@ pub const EVENT_MODIFY_STATE: u32 = 0x0002;
 pub const WAIT_OBJECT_0: u32 = 0;
 pub const KEY_WRITE: u32 = 0x20006;
 pub const REG_SZ: u32 = 1;
+pub const REG_BINARY: u32 = 3;
 pub const RRF_RT_REG_SZ: u32 = 0x0002;
+pub const RRF_RT_REG_BINARY: u32 = 0x0008;
 pub const HKEY_CURRENT_USER: HKEY = 0x80000001u64 as HKEY;
 
 #[repr(C)]
