@@ -192,8 +192,12 @@ gamepp-lite/
 ```
 main → 安装 crash log → acquire(mutex)
      ├─ 失败 → SetEvent(awake) 成功则静默退出；失败才 MessageBox（避免"闪退"错觉）
-     └─ 成功 → spawn(tray) → spawn(awake_listener) → Services::start(watcher) → run_native
+     └─ 成功 → opt::startup_state()（读盘 + 对账）→ spawn(tray, 对账后的状态)
+              → spawn(awake_listener) → Services::start(watcher) → run_native(App::new(.., startup))
 ```
+
+启动顺序里 **对账必须在建托盘之前**：托盘图标与 ② 页徽章都用同一个结果，否则会出现
+"托盘显示未优化、界面显示已优化"这种自相矛盾。对账逻辑见 6.4。
 
 ### 6.2 识别 → 自动优化（原"自动触发规则"的替代）
 
@@ -217,22 +221,50 @@ UI 按钮 → App::start_opt(dry_run, restore)
           （文件已删除 / 同名进程已在运行则跳过）
 ```
 
-### 6.4 托盘图标与状态
+状态文件除了"做过什么"，还记**怎么核实它还在生效**：`plan_target`（切到哪个方案）、
+`priority_targets`（改过哪些 pid 的优先级）、`boot_stamp`（哪一次开机写的）。
+没有这三项，重启后只能靠猜 —— 这正是"重启后仍显示已优化"的来源。
+
+### 6.4 启动对账（已优化 / 已还原的唯一来源）
+
+`State::load()` 只负责解析文件，**显示值一律来自 `opt::startup_state()`**：
+
+```
+saved = State::load()
+若 !saved.optimized → 直接用（未优化）
+rebooted = saved.boot_stamp 与本次开机标记相差 > 10s（旧文件没有该字段 ⇒ 视为已重启）
+
+① 服务    rebooted ⇒ 全部作废（系统会把该起的服务拉起来）
+          否则逐个查 SCM 状态，仍在 RUNNING ⇒ 作废
+② 进程    exe 文件已不存在，或同名进程又跑起来了 ⇒ 作废
+③ 电源    当前活动方案 ≠ plan_target ⇒ 作废（重启不会自动改回，所以不看 rebooted）
+④ 优先级  记录的 pid 不在进程表 / 名字对不上 / 已回到 NORMAL ⇒ 作废
+
+剩余项 == 0  → State::clear()，显示「已还原」
+剩余项  > 0  → 按剩余子集重写状态文件，显示「已优化」（还原只处理这些）
+有作废       → 原因写 runtime.log + ② 页「执行日志」
+```
+
+开机标记取 `NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime`：内核在开机时
+记下的绝对时刻，同一次开机内恒定、重启必变，不受"系统休眠算不算运行时长"的口径影响
+（`GetTickCount64` 兜底，但那套算法在休眠上各版本不一致，会误判）。
+
+### 6.5 托盘图标与状态
 
 两套图标随状态切换：
 
 ```
-assets/app.ico      灰底 + 闪电  ← 未优化（State::load().optimized == false）
+assets/app.ico      灰底 + 闪电  ← 未优化（startup_state().state.optimized == false）
 assets/app-opt.ico  绿底 + 对勾  ← 已优化
 ```
 
-- 启动时 `main` 读 `opt-state.ini` 决定初始图标；
+- 启动时 `main` 先对账，再把结果给 `tray::spawn` 与 `App::new`（两处同源）；
 - 优化/还原结束后 `TrayHandle::set_optimized(bool)` 发 `WM_APP+2`；
 - 托盘线程在 `WM_APP+2` 里重建 HICON（`CreateIconFromResourceEx` 从 ICO 字节解析）
   并 `Shell_NotifyIconW(NIM_MODIFY, NIF_ICON|NIF_TIP)` 一次改完图标与提示；
 - 提示文本 = `GamePP-Lite · 已优化/未优化 · 游戏中：xxx`。
 
-### 6.5 托盘菜单 / 收托盘 / 退出
+### 6.6 托盘菜单 / 收托盘 / 退出
 
 - 右键图标：`WM_APP+1` → `CreatePopupMenu` + `TrackPopupMenu(TPM_RETURNCMD)` → `TrayCmd` → UI 线程切页；
 - 点 × 或"立即最小化"：`CancelClose` + `Minimized(true)`；
@@ -240,7 +272,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
   托盘菜单点了没反应，用户看到的就是"闪退"；
 - 退出：`quitting = true` → 存盘 → `NIM_DELETE` → 关闭窗口。
 
-### 6.6 以管理员身份重启
+### 6.7 以管理员身份重启
 
 ```
 ② 页按钮 → single::release()（让出单实例互斥体）
@@ -261,7 +293,7 @@ assets/app-opt.ico  绿底 + 对勾  ← 已优化
 |---|---|
 | `config.json` | 识别节拍、稳定轮数、托盘开关、自启、数据保留、`opt`（优化清单 + 两个自动化开关） |
 | `gamelib.json` | 游戏库（exe、显示名、标签） |
-| `opt-state.ini` | 优化状态：是否已优化、停过哪些服务、被结束的 Wallpaper Engine、上一套电源方案 |
+| `opt-state.ini` | 优化状态：是否已优化、停过哪些服务、被结束的 Wallpaper Engine、上一套 / 当前电源方案、改过优先级的进程（pid+名字）、写入时的开机标记 |
 | `runtime.log` | 启动 / 托盘 / 优化逐行流水（排查"闪退"与优化失败） |
 | `crash.log` | panic 现场 + backtrace |
 

@@ -68,6 +68,23 @@ dist\gamepp-lite-setup-0.2.7.exe /uninstall          :: 卸载
 图标由 `analysis/make_icons.py` 生成（纯 Python 画像素 + 4× 超采样），
 `build.rs` 调 `windres` 把图标与版本信息编进 exe。
 
+## 「已优化」从哪来（启动对账）
+
+`opt-state.ini` 会跨进程、跨重启存活，所以**落盘 ≠ 仍然生效**。启动时不直接读
+`optimized=1` 当显示值，而是走 `opt::startup_state()` 逐项对账：
+
+| 项目 | 对账依据 |
+|---|---|
+| 停过的服务 | `boot_stamp` 必须等于本次开机，且服务当前仍是 STOPPED |
+| 结束的 Wallpaper Engine | 该 exe 文件仍在、进程还没被重新拉起来 |
+| 电源方案 | 当前活动方案仍是优化时切过去的那个 GUID（`plan_target`） |
+| 进程优先级 | 记录的 pid 还活着、映像名对得上、优先级仍非 NORMAL |
+
+`boot_stamp` 取 `NtQuerySystemInformation(SystemTimeOfDayInformation).BootTime`
+（内核记录的开机绝对时刻，同一次开机内恒定、重启必变），避免 sleep 计时口径差异。
+对不上的项直接划掉，一项都不剩就删除状态文件并显示「已还原」；被划掉的原因会写进
+`runtime.log`，同时出现在 ② 页「执行日志」里。
+
 ## 数据与日志
 
 ```
@@ -94,6 +111,11 @@ dist\gamepp-lite-setup-0.2.7.exe /uninstall          :: 卸载
    常驻实例，唤醒失败才弹 MessageBox。
 5. **单实例误判**：`GetLastError` 不会因调用成功而清零，前面任何失败的文件调用留下的 183
    会让 `CreateMutexW` 之后被误判成"已有实例"。修法是调用前 `SetLastError(0)`。
+6. **重启后仍显示「已优化」**：原版靠常驻 Electron 主进程持有状态，进程活多久状态就活多久；
+   独立程序把状态落盘后，重启（或系统重开）会让 `optimized=1` 比实际效果活得更久 ——
+   服务早被系统拉起、优先级随进程消失、Wallpaper Engine 也早回来了。修法是启动时对账
+   （见上一节「启动对账」），并把 `plan_target` / `priority_targets` / `boot_stamp`
+   一并落盘，让"还在不在生效"可核对。旧状态文件没有这些字段，按"不属于本次开机"处理。
 
 ## 开发期调试开关
 
