@@ -126,6 +126,15 @@ Section "Install" SEC_INSTALL
   ; 卸载器（放最后，包含前面所有文件的清单）
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
+  ; 自启项：安装器不主动开启（保持「由用户在程序内打开」的语义），但如果用户
+  ; 之前已经开过，就把路径改写到本次安装目录。否则用 /D 换目录升级后，旧值仍
+  ; 指向老路径，登录时进程根本不会被拉起，表现为「自启不生效」且毫无日志。
+  ; 注意这是提权上下文里的 HKCU = 点 UAC 的那个账号，与程序内开关同一口径。
+  ReadRegStr $4 HKCU "${APP_RUNKEY}" "${APP_RUNVALUE}"
+  ${If} $4 != ""
+    WriteRegStr HKCU "${APP_RUNKEY}" "${APP_RUNVALUE}" '"$INSTDIR\${APP_EXE}" --autostart'
+  ${EndIf}
+
   ; 快捷方式（/noshortcuts 可关掉；默认只建开始菜单，/desktop 加桌面）
   ReadIniStr $0 "$PLUGINSDIR\flags.ini" "flags" "noshortcuts"
   ${If} $0 != "1"
