@@ -194,6 +194,7 @@ unsafe extern "system" {
     pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
     pub fn GetModuleHandleW(name: LPCWSTR) -> HMODULE;
     pub fn GetExitCodeProcess(h: HANDLE, code: *mut u32) -> BOOL;
+    pub fn GetLocalTime(st: *mut SYSTEMTIME);
 }
 
 #[link(name = "user32")]

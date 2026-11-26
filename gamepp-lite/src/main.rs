@@ -15,7 +15,7 @@ mod win;
 
 use app::App;
 use std::io::Write;
-use win::single;
+use win::{ffi, single};
 
 const APP_NAME: &str = "GamePP-Lite";
 /// 单实例互斥体键。开发期可用 `GPP_INSTANCE_SUFFIX` 追加后缀，让测试实例
@@ -32,6 +32,36 @@ fn instance_key() -> String {
     format!("GamePP-Lite-Core{suffix}")
 }
 
+/// 本地时间戳，形如 `2026-11-26 18:30:04.123`。
+///
+/// 走 `GetLocalTime` 而不是把 `SystemTime` 自己换算成本地时区：换算要处理时区
+/// 与夏令时，标准库给不出，为一行日志引 chrono 又不划算。
+fn stamp() -> String {
+    let mut st = ffi::SYSTEMTIME::default();
+    unsafe { ffi::GetLocalTime(&mut st) };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
+    )
+}
+
+/// 启动上下文：谁把本进程拉起来的、从哪个目录、什么权限。
+///
+/// 自启排查时这三项是分水岭：参数里有没有 `--autostart` 决定来源；工作目录能
+/// 区分"快捷方式/资源管理器/命令行"拉起；提权状态决定注册表落到哪个账户的 HKCU。
+fn boot_context() -> String {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = if args.is_empty() {
+        "无".to_string()
+    } else {
+        args.join(" ")
+    };
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|e| format!("<取不到：{e}>"));
+    format!("参数={args}；cwd={cwd}；已提权={}", opt::is_elevated())
+}
+
 /// 追加一行运行日志（闪退时用户只需把这个文件发来）。
 pub fn log_line(tag: &str, text: &str) {
     let path = domain::settings::data_dir().join("runtime.log");
@@ -40,7 +70,7 @@ pub fn log_line(tag: &str, text: &str) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(f, "[{tag}] {text}");
+        let _ = writeln!(f, "[{}][{tag}] {text}", stamp());
     }
 }
 
@@ -53,7 +83,7 @@ fn install_crash_log() {
             .append(true)
             .open(&path)
         {
-            let _ = writeln!(f, "==== panic ====");
+            let _ = writeln!(f, "==== panic @ {} ====", stamp());
             let _ = writeln!(f, "{info}");
             let _ = writeln!(f, "{}", std::backtrace::Backtrace::force_capture());
         }
@@ -62,7 +92,7 @@ fn install_crash_log() {
 
 fn main() -> eframe::Result<()> {
     install_crash_log();
-    log_line("boot", "启动");
+    log_line("boot", &format!("启动（{}）", boot_context()));
 
     // ① 单实例：先抢占命名内核对象，抢不到说明已有常驻实例。
     if !single::acquire(&instance_key()) {
