@@ -8,6 +8,13 @@ use super::ffi::*;
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE_NAME: &str = "GamePPLite";
 
+/// 登录自启时追加到命令行的标记。
+///
+/// 对应原版 `isStartedWithOs` / `setStartWithWindowState`：进程要知道自己是被
+/// 系统拉起的，才可能选择"不弹窗口、直接进托盘"。以前只写裸路径，应用无法区分
+/// 来源，登录时必然弹一个完整主窗口。
+pub const AUTOSTART_FLAG: &str = "--autostart";
+
 pub fn enabled() -> bool {
     let sub = to_wide(RUN_KEY);
     let name = to_wide(VALUE_NAME);
@@ -51,7 +58,7 @@ pub fn set(enable: bool) -> bool {
             let exe = std::env::current_exe()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
-            let cmd = format!("\"{exe}\"");
+            let cmd = format!("\"{exe}\" {AUTOSTART_FLAG}");
             let data = to_wide(&cmd);
             let bytes = (data.len() * 2) as u32;
             RegSetValueExW(

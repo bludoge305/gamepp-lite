@@ -92,7 +92,17 @@ fn install_crash_log() {
 
 fn main() -> eframe::Result<()> {
     install_crash_log();
-    log_line("boot", &format!("启动（{}）", boot_context()));
+    // 是否由开机自启拉起：写 Run 值时带了该标记（见 win::autostart::AUTOSTART_FLAG）。
+    // 据此登录时不弹主窗口，只留托盘与识别服务 —— 对应原版 isStartedWithOs。
+    let launched_by_os = std::env::args().any(|a| a == win::autostart::AUTOSTART_FLAG);
+    log_line(
+        "boot",
+        &format!(
+            "启动（来源={}；{}）",
+            if launched_by_os { "开机自启" } else { "用户" },
+            boot_context()
+        ),
+    );
 
     // ① 单实例：先抢占命名内核对象，抢不到说明已有常驻实例。
     if !single::acquire(&instance_key()) {
@@ -136,11 +146,20 @@ fn main() -> eframe::Result<()> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([w, h])
             .with_min_inner_size([820.0, 560.0])
+            // 自启拉起时不显示窗口：托盘图标与识别服务照常起来，
+            // 用户点托盘"打开主界面"再由 App::show_window 显形。
+            .with_visible(!launched_by_os)
             .with_title(format!("{APP_NAME} · 游戏识别与 Windows 优化")),
         ..Default::default()
     };
 
-    log_line("boot", &format!("创建主窗口 {w}x{h}（逻辑像素）"));
+    log_line(
+        "boot",
+        &format!(
+            "创建主窗口 {w}x{h}（逻辑像素，{}）",
+            if launched_by_os { "自启隐藏" } else { "直接显示" }
+        ),
+    );
     let result = eframe::run_native(
         APP_NAME,
         native_options,
