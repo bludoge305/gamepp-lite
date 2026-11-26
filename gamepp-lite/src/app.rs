@@ -124,6 +124,10 @@ pub struct App {
     pub confirm_reset: bool,
     /// 「退出程序」确认弹窗。
     pub confirm_quit: bool,
+    /// 自启拉起时待执行的"把窗口藏起来"动作（见 logic() 的说明）。
+    hide_on_start: bool,
+    /// logic() 的调用次数，用来判断"首帧是否已经画完"。
+    frames: u32,
     ctx: egui::Context,
 }
 
@@ -133,6 +137,7 @@ impl App {
         tray: TrayHandle,
         tray_rx: Receiver<TrayCmd>,
         awake_rx: Receiver<()>,
+        started_by_os: bool,
     ) -> Self {
         // CJK 字体作为打底（base），主题字体在它之上安装；
         // 再应用 shadcn vega 主题（含深色样式）并锁定深色模式。
@@ -232,8 +237,15 @@ impl App {
             pending_restore: false,
             confirm_reset: false,
             confirm_quit: false,
+            hide_on_start: started_by_os,
+            frames: 0,
             ctx: cc.egui_ctx.clone(),
         };
+        // 自启拉起时立刻要一帧：eframe 画完首帧会无条件 set_visible(true)，
+        // 我们得靠紧接着的第二帧把窗口重新藏回去，越早越好（见 logic）。
+        if started_by_os {
+            cc.egui_ctx.request_repaint();
+        }
         if std::env::var("GPP_OPT_DRY").is_ok() {
             app.start_opt(true, false);
         }
@@ -526,7 +538,10 @@ impl App {
         self.dirty = true;
     }
 
-    fn show_window(&self) {
+    fn show_window(&mut self) {
+        // 用户（或另一个实例）要窗口了：取消可能还没执行的"自启隐藏"，
+        // 否则紧接着的那一帧会把刚唤醒的窗口又藏回去。
+        self.hide_on_start = false;
         self.ctx
             .send_viewport_cmd(egui::ViewportCommand::Visible(true));
         self.ctx
@@ -804,6 +819,15 @@ impl eframe::App for App {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // 窗口隐藏时（收进托盘）eframe 不跑 UI pass，但 logic 仍会被调用：
         // 托盘命令、后台消息、配置同步都放在这里。
+        // 自启拉起的"隐藏"也必须放这里：首帧画完 eframe 会无条件 set_visible(true)，
+        // 只有第二帧再发一次 Visible(false) 才收得住；此时已经没有 UI pass 了。
+        self.frames = self.frames.saturating_add(1);
+        if self.hide_on_start && self.frames >= 2 {
+            self.hide_on_start = false;
+            self.ctx
+                .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            crate::log_line("boot", "自启拉起：首帧后已隐藏窗口，仅保留托盘与识别服务");
+        }
         self.handle_tray();
         self.handle_notices();
         self.poll_opt();

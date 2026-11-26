@@ -163,7 +163,15 @@ fn main() -> eframe::Result<()> {
     let result = eframe::run_native(
         APP_NAME,
         native_options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, tray, tray_rx, awake_rx)))),
+        Box::new(move |cc| {
+            Ok(Box::new(App::new(
+                cc,
+                tray,
+                tray_rx,
+                awake_rx,
+                launched_by_os,
+            )))
+        }),
     );
     log_line("exit", &format!("事件循环结束：{result:?}"));
     result
