@@ -512,8 +512,9 @@ impl App {
 
     pub fn set_autostart(&mut self, on: bool) {
         let res = autostart::set(on);
-        let ok = res.is_ok();
-        self.autostart_on = on && ok;
+        // 回显以注册表真实状态为准：未提权时关不掉 HKLM 的全机项，
+        // 若按 on && ok 推断，界面会谎报"已关闭"，下次启动又变回开启。
+        self.autostart_on = autostart::enabled();
         self.settings.autostart = self.autostart_on;
         self.tray.set_autostart(self.autostart_on);
         self.toast(match res {

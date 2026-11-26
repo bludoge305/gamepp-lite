@@ -81,6 +81,7 @@ pub const RRF_RT_REG_SZ: u32 = 0x0002;
 pub const RRF_RT_REG_EXPAND_SZ: u32 = 0x0004;
 pub const RRF_RT_REG_BINARY: u32 = 0x0008;
 pub const HKEY_CURRENT_USER: HKEY = 0x80000001u64 as HKEY;
+pub const HKEY_LOCAL_MACHINE: HKEY = 0x80000002u64 as HKEY;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]

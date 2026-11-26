@@ -165,7 +165,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             changed = true;
         }
         let mut boot = app.autostart_on;
-        if ui::check_row(ui, &mut boot, "开机自启（HKCU\\...\\Run）") {
+        if ui::check_row(ui, &mut boot, "开机自启（提权开启时同时写入全机）") {
             app.set_autostart(boot);
         }
         ui.add_space(6.0);
