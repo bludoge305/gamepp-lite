@@ -124,15 +124,31 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    // ② 托盘：在独立线程里建消息窗口并跑 GetMessage 循环，先于主窗口就绪，
-    //    避免最小化到托盘时段出现"无图标"的空窗。
-    let optimized_at_boot = opt::State::load().optimized;
-    let (tray, tray_rx) = services::tray::spawn(APP_NAME, optimized_at_boot);
+    // ② 状态：先把落盘状态和"现在的真实情况"对账，托盘与界面都用这个结果。
+    //    直接读 `optimized=1` 会在重启后把早已失效的优化当成正在生效（本 bug 的根因）。
+    let startup = opt::startup_state();
+    log_line(
+        "boot",
+        &format!(
+            "优化状态对账：optimized={}（可还原 {} 项，{}；开机标记={}）",
+            startup.state.optimized,
+            startup.state.effective_items(),
+            if startup.reconciled { "已按实际状态校正" } else { "与记录一致" },
+            opt::state::boot_stamp()
+        ),
+    );
+    for line in &startup.lines {
+        log_line("boot", line);
+    }
 
-    // ③ 唤醒监听：别的实例启动时会把我们拉到前台。
+    // ③ 托盘：在独立线程里建消息窗口并跑 GetMessage 循环，先于主窗口就绪，
+    //    避免最小化到托盘时段出现"无图标"的空窗。
+    let (tray, tray_rx) = services::tray::spawn(APP_NAME, startup.state.optimized);
+
+    // ④ 唤醒监听：别的实例启动时会把我们拉到前台。
     let awake_rx = single::spawn_awake_listener(&instance_key());
 
-    // ④ UI + 服务
+    // ⑤ UI + 服务
     // 开发期可用 GPP_SIZE=864x608 指定逻辑窗口大小，便于在小窗口下核验排版。
     let (w, h) = std::env::var("GPP_SIZE")
         .ok()
@@ -170,6 +186,7 @@ fn main() -> eframe::Result<()> {
                 tray_rx,
                 awake_rx,
                 launched_by_os,
+                startup,
             )))
         }),
     );

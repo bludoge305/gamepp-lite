@@ -201,6 +201,8 @@ unsafe extern "system" {
     pub fn GetModuleHandleW(name: LPCWSTR) -> HMODULE;
     pub fn GetExitCodeProcess(h: HANDLE, code: *mut u32) -> BOOL;
     pub fn GetLocalTime(st: *mut SYSTEMTIME);
+    /// 系统启动以来的毫秒数（不会回绕）。用于给"开机标记"取兜底值。
+    pub fn GetTickCount64() -> u64;
 }
 
 #[link(name = "user32")]

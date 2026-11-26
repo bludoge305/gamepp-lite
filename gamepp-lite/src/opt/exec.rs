@@ -101,13 +101,16 @@ pub fn run(
 
     // 上一次优化还没还原就再次执行时，**不能**把旧状态丢掉：那些服务/进程/电源方案
     // 仍然是我们改的，丢了就再也还原不回来。这里把旧记录并进来再做增量。
+    // 跨开机残留的旧记录不能并（早就失效了，并入会让对账/还原去处理不相干的对象）。
     if !dry_run {
         let prev = State::load();
-        if prev.optimized {
+        if prev.optimized && prev.same_boot() {
             st.stopped_services = prev.stopped_services;
             st.killed_wallpaper = prev.killed_wallpaper;
             st.plan_switched = prev.plan_switched;
             st.prev_plan = prev.prev_plan;
+            st.plan_target = prev.plan_target;
+            st.priority_targets = prev.priority_targets;
             note(log, "· 检测到上一次优化尚未还原，本次在原记录上继续累加");
         }
     }
@@ -275,6 +278,7 @@ pub fn run(
                 } else if let Some((prev, new_guid)) = power::switch_to_pow(&pow) {
                     note(log, format!("· 电源方案已切换：{prev} → {new_guid}"));
                     st.prev_plan = Some(prev);
+                    st.plan_target = Some(new_guid);
                     st.plan_switched = true;
                 } else {
                     note(log, "· 切换电源方案失败（可能未导入过 GPP 方案）");
@@ -290,6 +294,7 @@ pub fn run(
                 {
                     note(log, format!("· 电源方案（已导入直连）：{prev} → {new_guid}"));
                     st.prev_plan = Some(prev);
+                    st.plan_target = Some(new_guid);
                     st.plan_switched = true;
                 } else {
                     note(log, "· 未找到 GPP_*.pow，系统里也没有已导入的 GPP 方案，跳过电源切换");
@@ -321,19 +326,20 @@ pub fn run(
     //
     // 未勾选时整段跳过。原版是"命中特征表就写优先级"（勾选=ABOVE_NORMAL，不勾=NORMAL），
     // 用户视角却是"我没勾它却被改了优先级"，所以这里刻意偏离，并在 README 里写明。
-    let priority_changed = if plan.game_priority {
+    let priority_targets = if plan.game_priority {
         apply_priority(plan, game_id, dry_run, log)
     } else {
         note(log, "· 未勾选「调整游戏进程优先级」，本步跳过");
-        0
+        Vec::new()
     };
+    st.priority_targets = priority_targets;
 
     // 只有"确实留下了可还原的改动"才算已优化。否则全不勾选也会把状态标成已优化，
     // 游戏退出时触发自动还原 → 还原会把全会话进程优先级压回 NORMAL（有外部副作用）。
     let need_restore = !st.stopped_services.is_empty()
         || st.plan_switched
         || !st.killed_wallpaper.is_empty()
-        || priority_changed > 0;
+        || !st.priority_targets.is_empty();
     st.optimized = !dry_run && need_restore;
 
     if !dry_run {
@@ -346,7 +352,7 @@ pub fn run(
                 format!(
                     "完成：共处理 {} 项动作，其中 {} 个进程优先级已调整",
                     plan.enabled_count(),
-                    priority_changed
+                    st.priority_targets.len()
                 ),
             );
         }
@@ -373,12 +379,15 @@ pub fn run(
 /// 原版把"名字命中即提优先级"无差别套用到当前会话，而特征表里有很短的通用子串，
 /// 实测会命中 `svchost.exe` / `explorer.exe` 一类系统进程 —— 给它们提优先级没有收益，
 /// 反而可能拖慢整机，所以白名单内的一律跳过并计数。
+/// 返回值是**真正被改过优先级的进程**（pid + 映像名），调用方原样记进状态文件：
+/// 优先级是进程级属性，进程退出即失效，只有记下 pid 才能在下次启动时核实
+/// "这项改动还在不在"（见 `state::reconcile_at_startup`）。
 fn apply_priority(
     plan: &OptPlan,
     game_id: Option<u32>,
     dry_run: bool,
     log: &mut Vec<String>,
-) -> usize {
+) -> Vec<(u32, String)> {
     let procs = process::list_processes(true);
     let mut skipped: Vec<(String, &'static str)> = Vec::new();
     let helper_running = procs.iter().any(|p| {
@@ -393,7 +402,7 @@ fn apply_priority(
     };
 
     let mut touched = 0usize;
-    let mut changed = 0usize;
+    let mut changed: Vec<(u32, String)> = Vec::new();
     for p in &procs {
         if process::match_any(&p.name, &patterns).is_none() {
             continue;
@@ -413,7 +422,7 @@ fn apply_priority(
                 if special {
                     // 原版对这几个标题反过来降优先级（实测是为了躲开它们的调度抢占）。
                     if !dry_run && ffi::SetPriorityClass(h, ffi::BELOW_NORMAL_PRIORITY_CLASS) != 0 {
-                        changed += 1;
+                        changed.push((p.pid, p.name.clone()));
                     }
                     note(
                         log,
@@ -421,7 +430,7 @@ fn apply_priority(
                     );
                 } else if !helper_running {
                     if !dry_run && ffi::SetPriorityClass(h, target) != 0 {
-                        changed += 1;
+                        changed.push((p.pid, p.name.clone()));
                     }
                     note(
                         log,
@@ -532,7 +541,9 @@ pub fn restore(st: &mut State, dry_run: bool, log: &mut Vec<String>) -> bool {
         st.optimized = false;
         st.stopped_services.clear();
         st.killed_wallpaper.clear();
+        st.priority_targets.clear();
         st.plan_switched = false;
+        st.plan_target = None;
         st.prev_plan = None;
         note(log, "还原完成");
         true

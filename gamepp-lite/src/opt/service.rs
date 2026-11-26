@@ -66,6 +66,42 @@ pub fn stop_service(name: &str) -> StopOutcome {
     }
 }
 
+/// 服务当前是否在运行。
+///
+/// 只申请 `SC_MANAGER_CONNECT | SERVICE_QUERY_STATUS`：启动对账可能是在普通权限下做的，
+/// 用 `SC_MANAGER_ALL_ACCESS` 会整片失败，把所有"我们停过的服务"误判成已恢复。
+///
+/// 返回 `None` 表示服务不存在或查不到（此时调用方按"不再是我们的改动"处理）。
+pub fn is_running(name: &str) -> Option<bool> {
+    unsafe {
+        let scm = ffi::OpenSCManagerW(std::ptr::null(), std::ptr::null(), ffi::SC_MANAGER_CONNECT);
+        if scm.is_null() {
+            return None;
+        }
+        let wname = ffi::wide(name);
+        let svc = ffi::OpenServiceW(scm, wname.as_ptr(), ffi::SERVICE_QUERY_STATUS);
+        if svc.is_null() {
+            ffi::CloseServiceHandle(scm);
+            return None;
+        }
+        let mut needed: u32 = 0;
+        let mut status = ffi::SERVICE_STATUS_PROCESS::default();
+        let ok = ffi::QueryServiceStatusEx(
+            svc,
+            ffi::SC_STATUS_PROCESS_INFO,
+            &mut status as *mut _ as *mut u8,
+            std::mem::size_of::<ffi::SERVICE_STATUS_PROCESS>() as u32,
+            &mut needed,
+        );
+        ffi::CloseServiceHandle(svc);
+        ffi::CloseServiceHandle(scm);
+        if ok == 0 {
+            return None;
+        }
+        Some(status.dwCurrentState == ffi::SERVICE_RUNNING)
+    }
+}
+
 /// 还原：确保「我们停过」的服务重新运行。
 ///
 /// 返回 `true` 表示服务当前处于运行状态 —— 本次拉起成功，或它本来就在跑

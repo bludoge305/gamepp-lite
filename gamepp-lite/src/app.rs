@@ -138,6 +138,7 @@ impl App {
         tray_rx: Receiver<TrayCmd>,
         awake_rx: Receiver<()>,
         started_by_os: bool,
+        startup: opt::StartupState,
     ) -> Self {
         // CJK 字体作为打底（base），主题字体在它之上安装；
         // 再应用 shadcn vega 主题（含深色样式）并锁定深色模式。
@@ -211,7 +212,12 @@ impl App {
                 .ok();
         }
 
-        let opt_restored = !opt::State::load().optimized;
+        // 优化状态只能来自"启动对账"的结果：直接 `State::load().optimized` 会把重启前
+        // 早已失效的优化当成正在生效（服务随开机重启、优先级随进程消失）。
+        let opt_restored = !startup.state.optimized;
+        // 托盘图标与界面用同一个值（托盘线程建图标时拿到的也是它），避免两处各读一次盘。
+        // 对账明细由 main 统一写进 runtime.log（tag=boot），这里不再重复落盘。
+        tray.set_optimized(startup.state.optimized);
 
         let mut app = Self {
             settings,
@@ -227,7 +233,9 @@ impl App {
             new_custom_exe: String::new(),
             new_custom_name: String::new(),
             editing: None,
-            opt_log: Vec::new(),
+            // 对账时若把过期状态划掉了，说明要写进 ② 页「执行日志」：
+            // 否则用户只会看到状态从「已优化」变回「已还原」，没有任何解释。
+            opt_log: startup.lines.clone(),
             opt_running: false,
             opt_restored,
             elevated: opt::is_elevated(),

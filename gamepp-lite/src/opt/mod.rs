@@ -17,6 +17,7 @@ pub mod state;
 pub use exec::{restore, run};
 pub use plan::OptPlan;
 pub use state::State;
+pub use state::Startup as StartupState;
 
 /// 一次执行的结果。
 pub struct OptReport {
@@ -47,6 +48,15 @@ pub fn restore_plan(dry_run: bool) -> OptReport {
         state: st,
         ok,
     }
+}
+
+/// 启动时的优化状态：读盘 + 与系统真实情况对账。
+///
+/// **不要**在启动路径上直接 `State::load().optimized` 当显示值 —— 那份文件会跨进程、
+/// 跨重启存活，重启后里面的 `optimized=1` 早就和真实情况脱节了。界面、托盘都必须
+/// 用这个函数的返回值（原因与对账细节见 `state::reconcile_at_startup`）。
+pub fn startup_state() -> StartupState {
+    state::reconcile_at_startup()
 }
 
 pub fn is_elevated() -> bool {
